@@ -1,0 +1,9 @@
+[package]
+name = "low-latency-data-structures"
+version = "0.1.0"
+edition = "2024"
+
+[package.metadata.bin]
+rustfmt-unstable = { version = "^1.0.0" }
+
+[dependencies]
