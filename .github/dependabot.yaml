@@ -1,0 +1,14 @@
+---
+version: 2
+updates:
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 1
+    allow:
+      - dependency-type: direct
+    groups:
+      patch:
+        update-types:
+          - patch

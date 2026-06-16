@@ -1,0 +1,9 @@
+---
+repos:
+  - repo: local
+    hooks:
+      - id: just pre-commit-hook
+        name: just pre-commit-hook
+        entry: just pre-commit-hook
+        language: unsupported
+        pass_filenames: false
