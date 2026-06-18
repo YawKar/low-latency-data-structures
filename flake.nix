@@ -23,6 +23,7 @@
         {
           devShells.default = pkgs.mkShell {
             nativeBuildInputs = with pkgs; [
+              bashInteractive
               rustPlatform.bindgenHook
               ((rust-bin.fromRustupToolchainFile ./rust-toolchain.toml).override {
                 extensions = [
@@ -30,6 +31,8 @@
                   "rust-analyzer"
                 ];
               })
+              perf
+              heaptrack
               nixfmt
               statix
               yamlfmt
