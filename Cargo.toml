@@ -6,4 +6,28 @@ edition = "2024"
 [package.metadata.bin]
 rustfmt-unstable = { version = "^1.0.0" }
 
+[features]
+default = ["test_dhat"]
+test_basic = []
+test_loom = ["dep:loom"]
+test_dhat = ["dep:dhat"]
+
 [dependencies]
+anyhow = "1.0.102"
+core_affinity = "0.8.3"
+dhat = {version = "0.3.3", optional = true}
+loom = {version = "0.7.2", optional = true}
+libc = "0.2.186"
+
+[dev-dependencies]
+criterion = { version = "0.8.2", features = ["html_reports"] }
+hdrhistogram = "7.5.4"
+
+[[bench]]
+name = "spsc_throughput"
+harness = false
+
+[[bench]]
+name = "spsc_latency"
+harness = false
+

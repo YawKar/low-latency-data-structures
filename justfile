@@ -12,7 +12,8 @@ init:
     cargo fetch
     cargo install cargo-run-bin
     cargo bin -i
-    cargo check
+    cargo check --features test_loom
+    cargo check --features test_basic
 
 # format everything
 [group("Code Style")]
@@ -47,3 +48,36 @@ build level:
 build-release: (build "release")
 [group("Packaging")]
 build-debug: (build "")
+
+# Run all test groups
+[group("Tests")]
+test-all: test-basic test-loom test-dhat
+
+# Run basic tests
+[group("Tests")]
+test-basic:
+    cargo test --no-default-features --features test_basic
+
+# Run loom tests (requires loom shim)
+[group("Tests")]
+test-loom:
+    cargo test --no-default-features --features test_loom
+
+# Run dhat tests (requires dhat global allocator)
+[group("Tests")]
+test-dhat:
+    cargo test --no-default-features --features test_dhat
+
+[group("Benches")]
+view-bench-report:
+    xdg-open ./target/criterion/report/index.html
+
+[group("Benches")]
+bench-throughput:
+    # TODO: requires some meta-selection to find cpu cores that share L cache
+    taskset -c 0,1 cargo bench --no-default-features --bench spsc_throughput 
+
+[group("Benches")]
+bench-latency:
+    # TODO: requires some meta-selection to find cpu cores that share L cache
+    taskset -c 0,1 cargo bench --no-default-features --bench spsc_latency 
