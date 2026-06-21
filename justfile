@@ -46,6 +46,10 @@ lint-fix: (lint "fix")
 build level:
     cargo build {{ if level != "" { "--" + level } else { "" } }}
 [group("Packaging")]
+[private]
+build-bin level binary:
+    cargo build {{ if level != "" { "--" + level } else { "" } }} --bin {{ binary }}
+[group("Packaging")]
 build-release: (build "release")
 [group("Packaging")]
 build-debug: (build "")
@@ -57,6 +61,125 @@ heaptrack-release binary:
 [group("Debug & Profiling")]
 asm *ARGS:
     cargo asm --rust {{ ARGS }}
+# L1 data cache: loads, stores, misses, miss rate
+[group("Debug & Profiling")]
+perf-l1 bin *args: (build-bin "release" bin)
+    perf stat -e \
+        L1-dcache-loads,\
+        L1-dcache-load-misses,\
+        L1-dcache-stores \
+        -- ./target/release/{{ bin }} {{ args }}
+# L2 cache
+[group("Debug & Profiling")]
+perf-l2 bin *args: (build-bin "release" bin)
+    perf stat -e \
+        l2_rqsts.references,\
+        l2_rqsts.miss,\
+        l2_rqsts.all_demand_data_rd \
+        -- ./target/release/{{ bin }} {{ args }}
+# L3 / LLC: loads, load misses, stores, store misses
+[group("Debug & Profiling")]
+perf-llc bin *args: (build-bin "release" bin)
+    perf stat -e \
+        LLC-loads,\
+        LLC-load-misses,\
+        LLC-stores,\
+        LLC-store-misses \
+        -- ./target/release/{{ bin }} {{ args }}
+# dTLB: loads, load misses, stores, store misses, page walk cycles
+[group("Debug & Profiling")]
+perf-dtlb bin *args: (build-bin "release" bin)
+    perf stat -e \
+        dTLB-loads,\
+        dTLB-load-misses,\
+        dTLB-stores,\
+        dTLB-store-misses,\
+        dtlb_load_misses.walk_completed,\
+        dtlb_load_misses.walk_active \
+        -- ./target/release/{{ bin }} {{ args }}
+# iTLB (instruction TLB — useful if code footprint is large)
+[group("Debug & Profiling")]
+perf-itlb bin *args: (build-bin "release" bin)
+    perf stat -e \
+        iTLB-loads,\
+        iTLB-load-misses \
+        -- ./target/release/{{ bin }} {{ args }}
+# Full cache hierarchy in one shot (may need multiple runs if >8 counters)
+[group("Debug & Profiling")]
+perf-cache-all bin *args: (build-bin "release" bin)
+    perf stat -e \
+        L1-dcache-loads,\
+        L1-dcache-load-misses,\
+        L1-dcache-stores,\
+        LLC-loads,\
+        LLC-load-misses,\
+        dTLB-loads,\
+        dTLB-load-misses,\
+        dTLB-stores,\
+        dTLB-store-misses \
+        -- ./target/release/{{ bin }} {{ args }}
+# Overall execution quality: IPC, branch misses, context switches
+[group("Debug & Profiling")]
+perf-overview bin *args: (build-bin "release" bin)
+    perf stat -e \
+        cycles,\
+        instructions,\
+        branches,\
+        branch-misses,\
+        cache-references,\
+        cache-misses,\
+        context-switches,\
+        cpu-migrations \
+        -- ./target/release/{{ bin }} {{ args }}
+# False sharing detection
+[group("Debug & Profiling")]
+perf-false-sharing-record bin *args: (build-bin "release" bin)
+    sudo perf c2c record -g -- ./target/release/{{ bin }} {{ args }}
+    sudo chmod o+r ./perf.data
+[group("Debug & Profiling")]
+perf-false-sharing-report:
+    perf c2c report --stdio
+[group("Debug & Profiling")]
+perf-all bin *args: (build-bin "release" bin)
+    perf stat -e \
+        cycles,\
+        instructions,\
+        L1-dcache-loads,\
+        L1-dcache-load-misses,\
+        L1-dcache-stores,\
+        LLC-loads,\
+        LLC-load-misses,\
+        LLC-stores,\
+        LLC-store-misses,\
+        dTLB-loads,\
+        dTLB-load-misses,\
+        dTLB-stores,\
+        dTLB-store-misses,\
+        branches,\
+        branch-misses,\
+        context-switches,\
+        cpu-migrations \
+        -- ./target/release/{{ bin }} {{ args }}
+[group("Debug & Profiling")]
+perf-tlb-compare bin *args: (build-bin "release" bin)
+    @echo "=== WITHOUT hugepages ==="
+    perf stat -e dTLB-loads,dTLB-load-misses,dTLB-stores,dTLB-store-misses,cycles,instructions \
+        -- ./target/release/{{ bin }} {{ args }}
+    @echo ""
+    @echo "=== WITH hugepages (set HUGEPAGES=1 or adjust binary flag) ==="
+    HUGEPAGES=1 perf stat -e dTLB-loads,dTLB-load-misses,dTLB-stores,dTLB-store-misses,cycles,instructions \
+        -- ./target/release/{{ bin }} {{ args }}
+# Run on specific cores for stable results
+[group("Debug & Profiling")]
+perf-pinned cores bin *args: (build-bin "release" bin)
+    taskset -c {{ cores }} perf stat -e \
+        cycles,\
+        instructions,\
+        L1-dcache-load-misses,\
+        LLC-load-misses,\
+        dTLB-load-misses,\
+        branch-misses \
+        -- ./target/release/{{ bin }} {{ args }}
 
 # Run all test groups
 [group("Tests")]

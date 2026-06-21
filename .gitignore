@@ -4,3 +4,5 @@
 /.bin
 # heaptrack dump files
 heaptrack.*.*
+# perf c2c data
+perf.data*
