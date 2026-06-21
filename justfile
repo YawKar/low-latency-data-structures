@@ -12,6 +12,7 @@ init:
     cargo fetch
     cargo install cargo-run-bin
     cargo bin -i
+    cargo install cargo-show-asm
     cargo check --features test_loom
     cargo check --features test_basic
 
@@ -53,6 +54,9 @@ build-debug: (build "")
 heaptrack-release binary:
     RUSTFLAGS="-C force-frame-pointers=yes" cargo build --release --bin {{ binary }}
     heaptrack ./target/release/{{ binary }}
+[group("Debug & Profiling")]
+asm *ARGS:
+    cargo asm --rust {{ ARGS }}
 
 # Run all test groups
 [group("Tests")]

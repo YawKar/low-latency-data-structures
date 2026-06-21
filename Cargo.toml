@@ -5,6 +5,7 @@ edition = "2024"
 
 [package.metadata.bin]
 rustfmt-unstable = { version = "^1.0.0" }
+cargo-show-asm = { version = "^0.2.61" }
 
 [features]
 default = []
