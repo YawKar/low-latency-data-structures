@@ -49,6 +49,11 @@ build-release: (build "release")
 [group("Packaging")]
 build-debug: (build "")
 
+[group("Debug & Profiling")]
+heaptrack-release binary:
+    RUSTFLAGS="-C force-frame-pointers=yes" cargo build --release --bin {{ binary }}
+    heaptrack ./target/release/{{ binary }}
+
 # Run all test groups
 [group("Tests")]
 test-all: test-basic test-loom test-dhat

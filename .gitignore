@@ -1,3 +1,6 @@
+# build artifacts
 /target
+# cargo-run-bin tool saves locally
 /.bin
-/store
+# heaptrack dump files
+heaptrack.*.*
