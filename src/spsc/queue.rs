@@ -38,12 +38,6 @@ pub(super) struct Queue<T> {
     capacity: usize,
 }
 
-/// It's required so Producer/Consumer can have inner Arc<Queue<T>> as queue uses UnsafeCell.
-/// Although, Producer/Consumer do operate on queue, they do it through its API.
-unsafe impl<T: Send> Send for Queue<T> {}
-/// Queue's API is lock-free and concurrent.
-unsafe impl<T: Send> Sync for Queue<T> {}
-
 impl<T> Queue<T> {
     #[inline]
     pub fn pop(&self) -> Option<T> {
@@ -57,11 +51,18 @@ impl<T> Queue<T> {
                 return None;
             }
         }
-        let slot_ptr = unsafe { self.slots.add(head & (self.capacity - 1)) };
+        let slot_ptr = self.slots.wrapping_add(head & (self.capacity - 1));
         #[cfg(feature = "test_loom")]
         let item = unsafe { (*slot_ptr).get().with(|ptr| ptr.cast::<T>().read()) };
         #[cfg(not(feature = "test_loom"))]
-        let item = unsafe { (*slot_ptr).with(|ptr| ptr.cast::<T>().read()) };
+        // SAFETY: we read the cached_tail value that was released some time ago, it means we are
+        // guaranteed to see written value here. And it's not copied more than once because we
+        // increment head on the next line.
+        let item = unsafe {
+            slot_ptr
+                .as_ref_unchecked()
+                .with(|ptr| ptr.cast::<T>().read())
+        };
         self.consumer_state
             .head
             .store(head.wrapping_add(1), atomic::Ordering::Release);
@@ -80,7 +81,7 @@ impl<T> Queue<T> {
                 return Some(item);
             }
         }
-        let slot_ptr = unsafe { self.slots.add(tail & (self.capacity - 1)) };
+        let slot_ptr = self.slots.wrapping_add(tail & (self.capacity - 1));
         #[cfg(feature = "test_loom")]
         unsafe {
             (*slot_ptr)
@@ -88,8 +89,13 @@ impl<T> Queue<T> {
                 .with(|ptr| ptr.cast::<T>().write(item))
         };
         #[cfg(not(feature = "test_loom"))]
+        // SAFETY: slot_ptr can't point to something after the slots buffer because of `% capacity`
+        // above. And it can be converted to a reference to T because T is self-contained bitwise
+        // (&T is 'static during the with_mut closure).
         unsafe {
-            (*slot_ptr).with_mut(|ptr| ptr.cast::<T>().write(item))
+            slot_ptr
+                .as_ref_unchecked()
+                .with_mut(|ptr| ptr.cast::<T>().write(item))
         };
         self.producer_state
             .tail
@@ -103,10 +109,13 @@ impl<T> Drop for Queue<T> {
         let head = self.consumer_state.head.load(atomic::Ordering::Relaxed);
         let tail = self.producer_state.tail.load(atomic::Ordering::Relaxed);
         for i in head..tail {
+            let slot_ptr = self.slots.wrapping_add(i & (self.capacity - 1));
+            // SAFETY: it's not null because `i & (sef.capacity - 1)` limits it to [0;
+            // allocated_cap). And it can be safely converted to a reference because T is self
+            // contained bitwise.
             unsafe {
-                let slot_ptr = self.slots.wrapping_add(i & (self.capacity - 1));
-                (*slot_ptr).with_mut(|ptr| {
-                    (*ptr).assume_init_drop();
+                slot_ptr.as_ref_unchecked().with_mut(|ptr| {
+                    ptr.as_mut_unchecked().assume_init_drop();
                 })
             }
         }
@@ -123,7 +132,15 @@ impl<T> Drop for Queue<T> {
             use crate::shim::alloc;
             let layout = alloc::Layout::array::<UnsafeCell<MaybeUninit<T>>>(self.capacity).unwrap();
             // TODO: when hugepages are used, should use libc::munmap instead
-            unsafe { alloc::dealloc(self.slots.cast::<u8>(), layout) };
+            // SAFETY: Queue is share-owned by 2 Arc objects (Producer/Consumer), so double-free is
+            // not possible unless Producer/Consumer are Sync
+            unsafe {
+                static_assertions::assert_impl_all!(Producer<u32>: Send);
+                static_assertions::assert_not_impl_any!(Producer<u32>: Sync);
+                static_assertions::assert_impl_all!(Consumer<u32>: Send);
+                static_assertions::assert_not_impl_any!(Consumer<u32>: Sync);
+                alloc::dealloc(self.slots.cast::<u8>(), layout)
+            };
         }
     }
 }
@@ -132,9 +149,26 @@ impl<T> Drop for Queue<T> {
 #[cfg(feature = "test_basic")]
 mod tests {
     use std::rc::Rc;
+    use std::thread;
 
     use super::*;
     use crate::shim::cell::Cell;
+
+    #[test]
+    fn move_producer_consumer_to_threads() -> anyhow::Result<()> {
+        let (producer, consumer) = new(2)?;
+        thread::spawn(move || {
+            producer.push(123);
+        })
+        .join()
+        .unwrap();
+        thread::spawn(move || {
+            assert_eq!(consumer.pop(), Some(123));
+        })
+        .join()
+        .unwrap();
+        Ok(())
+    }
 
     #[test]
     fn handoff_one_value() -> anyhow::Result<()> {

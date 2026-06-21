@@ -11,6 +11,7 @@ pub mod cell {
     #[derive(Debug)]
     pub(crate) struct UnsafeCell<T>(std::cell::UnsafeCell<T>);
 
+    #[allow(dead_code)]
     impl<T> UnsafeCell<T> {
         pub(crate) fn new(data: T) -> UnsafeCell<T> {
             UnsafeCell(std::cell::UnsafeCell::new(data))
