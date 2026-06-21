@@ -20,6 +20,7 @@ dhat = {version = "0.3.3", optional = true}
 loom = {version = "0.7.2", optional = true}
 libc = "0.2.186"
 static_assertions = "1.1.0"
+quanta = "0.12.6"
 
 [dev-dependencies]
 criterion = { version = "0.8.2", features = ["html_reports"] }
