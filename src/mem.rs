@@ -27,7 +27,7 @@ pub fn allocate_buffer<T>(capacity: usize, use_hugepages: bool) -> *mut UnsafeCe
     let layout_size = alloc::Layout::array::<UnsafeCell<MaybeUninit<T>>>(capacity)
         .unwrap()
         .size();
-    if use_hugepages {
+    let ptr = if use_hugepages {
         let ptr = unsafe {
             // Using 2 MiB page size
             let page_size = 2 * 1024 * 1024;
@@ -50,6 +50,10 @@ pub fn allocate_buffer<T>(capacity: usize, use_hugepages: bool) -> *mut UnsafeCe
             std::mem::align_of::<UnsafeCell<MaybeUninit<T>>>(),
         )
         .unwrap();
-        unsafe { alloc::alloc_zeroed(layout) as *mut UnsafeCell<MaybeUninit<T>> }
+        unsafe { alloc::alloc(layout) as *mut UnsafeCell<MaybeUninit<T>> }
+    };
+    if ptr.is_null() {
+        panic!("failed to allocate buffer");
     }
+    ptr
 }
