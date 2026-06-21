@@ -52,9 +52,6 @@ impl<T> Queue<T> {
             }
         }
         let slot_ptr = self.slots.wrapping_add(head & (self.capacity - 1));
-        #[cfg(feature = "test_loom")]
-        let item = unsafe { (*slot_ptr).get_mut().with(|ptr| ptr.cast::<T>().read()) };
-        #[cfg(not(feature = "test_loom"))]
         // SAFETY: we read the cached_tail value that was released some time ago, it means we are
         // guaranteed to see written value here. And it's not copied more than once because we
         // increment head on the next line.
@@ -82,13 +79,6 @@ impl<T> Queue<T> {
             }
         }
         let slot_ptr = self.slots.wrapping_add(tail & (self.capacity - 1));
-        #[cfg(feature = "test_loom")]
-        unsafe {
-            (*slot_ptr)
-                .get_mut()
-                .with(|ptr| ptr.cast::<T>().write(item))
-        };
-        #[cfg(not(feature = "test_loom"))]
         // SAFETY: slot_ptr can't point to something after the slots buffer because of `% capacity`
         // above. And it can be converted to a reference to T because T is self-contained bitwise
         // (&T is 'static during the with_mut closure).
