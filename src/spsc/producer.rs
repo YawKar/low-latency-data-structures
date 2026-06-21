@@ -16,6 +16,10 @@ pub struct Producer<T> {
     _not_sync: PhantomData<*const ()>,
 }
 
+// Shouldn't be possible to construct Arc<Producer<T>> and then use it from different threads as it
+// will break the requirement of *Single* producer *Single* consumer queue.
+static_assertions::assert_not_impl_any!(Producer<u32>: Sync);
+
 unsafe impl<T: Send> Send for Producer<T> {}
 
 impl<T> Producer<T> {
