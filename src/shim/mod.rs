@@ -1,10 +1,10 @@
-#[cfg(not(feature = "test_loom"))]
+#[cfg(not(feature = "tests_loom"))]
 pub use std::{alloc, sync};
 
-#[cfg(feature = "test_loom")]
+#[cfg(feature = "tests_loom")]
 pub use loom::*;
 
-#[cfg(not(feature = "test_loom"))]
+#[cfg(not(feature = "tests_loom"))]
 pub mod cell {
     pub use std::cell::*;
 

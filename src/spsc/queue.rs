@@ -121,7 +121,7 @@ impl<T> Drop for Queue<T> {
                 })
             }
         }
-        #[cfg(feature = "test_loom")]
+        #[cfg(feature = "tests_loom")]
         unsafe {
             drop(Vec::from_raw_parts(
                 self.slots,
@@ -129,7 +129,7 @@ impl<T> Drop for Queue<T> {
                 self.capacity,
             ))
         }
-        #[cfg(not(feature = "test_loom"))]
+        #[cfg(not(feature = "tests_loom"))]
         {
             use crate::shim::alloc;
             let layout = alloc::Layout::array::<UnsafeCell<MaybeUninit<T>>>(self.capacity).unwrap();
@@ -148,8 +148,8 @@ impl<T> Drop for Queue<T> {
 }
 
 #[cfg(test)]
-#[cfg(feature = "test_basic")]
-mod tests {
+#[cfg(feature = "tests_basic")]
+mod tests_basic {
     use std::rc::Rc;
     use std::thread;
 
@@ -315,8 +315,8 @@ mod tests {
 }
 
 #[cfg(test)]
-#[cfg(feature = "test_loom")]
-mod loom_tests {
+#[cfg(feature = "tests_loom")]
+mod tests_loom {
     use super::*;
 
     #[test]
@@ -457,8 +457,8 @@ mod loom_tests {
 }
 
 #[cfg(test)]
-#[cfg(feature = "test_dhat")]
-mod dhat_tests {
+#[cfg(feature = "tests_dhat")]
+mod tests_dhat {
     use super::*;
 
     #[global_allocator]

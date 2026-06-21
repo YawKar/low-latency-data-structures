@@ -6,7 +6,7 @@ use crate::shim::cell::UnsafeCell;
 
 /// Allocate a typed buffer with `capacity` uninitialized items each with memory layout of `T`.
 /// Loom tests version.
-#[cfg(feature = "test_loom")]
+#[cfg(feature = "tests_loom")]
 pub fn allocate_buffer<T>(
     capacity: usize,
     _use_hugepages: bool,
@@ -21,7 +21,7 @@ pub fn allocate_buffer<T>(
 }
 
 /// Allocate a typed buffer with `capacity` uninitialized items each with memory layout of `T`.
-#[cfg(not(feature = "test_loom"))]
+#[cfg(not(feature = "tests_loom"))]
 pub fn allocate_buffer<T>(capacity: usize, use_hugepages: bool) -> *mut UnsafeCell<MaybeUninit<T>> {
     use crate::shim::alloc;
     let layout_size = alloc::Layout::array::<UnsafeCell<MaybeUninit<T>>>(capacity)

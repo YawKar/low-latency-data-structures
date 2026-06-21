@@ -13,8 +13,8 @@ init:
     cargo install cargo-run-bin
     cargo bin -i
     cargo install cargo-show-asm
-    cargo check --features test_loom
-    cargo check --features test_basic
+    cargo check --features tests_loom
+    cargo check --features tests_basic
 
 # format everything
 [group("Code Style")]
@@ -188,17 +188,17 @@ test-all: test-basic test-loom test-dhat
 # Run basic tests
 [group("Tests")]
 test-basic:
-    cargo test --no-default-features --features test_basic
+    cargo test --no-default-features --features tests_basic
 
 # Run loom tests (requires loom shim)
 [group("Tests")]
 test-loom:
-    cargo test --no-default-features --features test_loom
+    cargo test --no-default-features --features tests_loom
 
 # Run dhat tests (requires dhat global allocator)
 [group("Tests")]
 test-dhat:
-    cargo test --no-default-features --features test_dhat
+    cargo test --no-default-features --features tests_dhat
 
 [group("Benches")]
 view-bench-report:
