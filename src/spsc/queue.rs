@@ -26,7 +26,7 @@ pub fn new<T>(capacity: usize) -> anyhow::Result<(Producer<T>, Consumer<T>)> {
         capacity,
     });
     let producer = Producer::new(q.clone());
-    let consumer = Consumer::new(q.clone());
+    let consumer = Consumer::new(q);
     Ok((producer, consumer))
 }
 
