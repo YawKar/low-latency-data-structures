@@ -30,6 +30,7 @@ pub fn new<T>(capacity: usize) -> anyhow::Result<(Producer<T>, Consumer<T>)> {
     Ok((producer, consumer))
 }
 
+#[repr(C)]
 pub(super) struct Queue<T> {
     producer_state: ProducerState,
     consumer_state: ConsumerState,
