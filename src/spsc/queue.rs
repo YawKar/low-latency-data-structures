@@ -44,10 +44,7 @@ impl<T> Queue<T> {
         let head = self.consumer_state.head.load(atomic::Ordering::Relaxed);
         if head == self.consumer_state.cached_tail.get() {
             // it's still may not be empty
-            self.consumer_state
-                .cached_tail
-                .set(self.producer_state.tail.load(atomic::Ordering::Acquire));
-            if head == self.consumer_state.cached_tail.get() {
+            if self.pop_slow_check(head) {
                 return None;
             }
         }
@@ -66,19 +63,21 @@ impl<T> Queue<T> {
         Some(item)
     }
 
+    #[cold]
+    fn pop_slow_check(&self, head: usize) -> bool {
+        self.consumer_state
+            .cached_tail
+            .set(self.producer_state.tail.load(atomic::Ordering::Acquire));
+        head == self.consumer_state.cached_tail.get()
+    }
+
     #[inline]
     pub fn push(&self, item: T) -> Option<T> {
         let tail = self.producer_state.tail.load(atomic::Ordering::Relaxed);
         debug_assert!(tail.wrapping_sub(self.producer_state.cached_head.get()) <= self.capacity);
         if tail.wrapping_sub(self.producer_state.cached_head.get()) >= self.capacity {
             // it's still may not be full
-            self.producer_state
-                .cached_head
-                .set(self.consumer_state.head.load(atomic::Ordering::Acquire));
-            debug_assert!(
-                tail.wrapping_sub(self.producer_state.cached_head.get()) <= self.capacity
-            );
-            if tail.wrapping_sub(self.producer_state.cached_head.get()) >= self.capacity {
+            if self.push_slow_check(tail) {
                 return Some(item);
             }
         }
@@ -95,6 +94,15 @@ impl<T> Queue<T> {
             .tail
             .store(tail.wrapping_add(1), atomic::Ordering::Release);
         None
+    }
+
+    #[cold]
+    fn push_slow_check(&self, tail: usize) -> bool {
+        self.producer_state
+            .cached_head
+            .set(self.consumer_state.head.load(atomic::Ordering::Acquire));
+        debug_assert!(tail.wrapping_sub(self.producer_state.cached_head.get()) <= self.capacity);
+        tail.wrapping_sub(self.producer_state.cached_head.get()) >= self.capacity
     }
 }
 
