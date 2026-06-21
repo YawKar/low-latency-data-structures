@@ -69,12 +69,16 @@ impl<T> Queue<T> {
     #[inline]
     pub fn push(&self, item: T) -> Option<T> {
         let tail = self.producer_state.tail.load(atomic::Ordering::Relaxed);
-        if tail.wrapping_sub(self.producer_state.cached_head.get()) == self.capacity {
+        debug_assert!(tail.wrapping_sub(self.producer_state.cached_head.get()) <= self.capacity);
+        if tail.wrapping_sub(self.producer_state.cached_head.get()) >= self.capacity {
             // it's still may not be full
             self.producer_state
                 .cached_head
                 .set(self.consumer_state.head.load(atomic::Ordering::Acquire));
-            if tail.wrapping_sub(self.producer_state.cached_head.get()) == self.capacity {
+            debug_assert!(
+                tail.wrapping_sub(self.producer_state.cached_head.get()) <= self.capacity
+            );
+            if tail.wrapping_sub(self.producer_state.cached_head.get()) >= self.capacity {
                 return Some(item);
             }
         }
