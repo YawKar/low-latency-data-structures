@@ -45,6 +45,7 @@ unsafe impl<T: Send> Send for Queue<T> {}
 unsafe impl<T: Send> Sync for Queue<T> {}
 
 impl<T> Queue<T> {
+    #[inline]
     pub fn pop(&self) -> Option<T> {
         let head = self.consumer_state.head.load(atomic::Ordering::Relaxed);
         if head == self.consumer_state.cached_tail.get() {
@@ -67,6 +68,7 @@ impl<T> Queue<T> {
         Some(item)
     }
 
+    #[inline]
     pub fn push(&self, item: T) -> Option<T> {
         let tail = self.producer_state.tail.load(atomic::Ordering::Relaxed);
         if tail.wrapping_sub(self.producer_state.cached_head.get()) == self.capacity {

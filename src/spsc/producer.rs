@@ -26,6 +26,7 @@ impl<T> Producer<T> {
         }
     }
 
+    #[inline]
     pub fn push(&self, item: T) -> Option<T> {
         self.inner.push(item)
     }

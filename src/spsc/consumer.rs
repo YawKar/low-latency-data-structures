@@ -26,6 +26,7 @@ impl<T> Consumer<T> {
         }
     }
 
+    #[inline]
     pub fn pop(&self) -> Option<T> {
         self.inner.pop()
     }
