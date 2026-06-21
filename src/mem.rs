@@ -24,7 +24,9 @@ pub fn allocate_buffer<T>(
 #[cfg(not(feature = "test_loom"))]
 pub fn allocate_buffer<T>(capacity: usize, use_hugepages: bool) -> *mut UnsafeCell<MaybeUninit<T>> {
     use crate::shim::alloc;
-    let layout_size = capacity.strict_mul(std::mem::size_of::<T>());
+    let layout_size = alloc::Layout::array::<UnsafeCell<MaybeUninit<T>>>(capacity)
+        .unwrap()
+        .size();
     if use_hugepages {
         let ptr = unsafe {
             // Using 2 MiB page size
@@ -43,8 +45,11 @@ pub fn allocate_buffer<T>(capacity: usize, use_hugepages: bool) -> *mut UnsafeCe
         assert_ne!(ptr, libc::MAP_FAILED, "hugepage mmap failed");
         ptr as *mut UnsafeCell<MaybeUninit<T>>
     } else {
-        let layout =
-            alloc::Layout::from_size_align(layout_size, std::mem::align_of::<T>()).unwrap();
+        let layout = alloc::Layout::from_size_align(
+            layout_size,
+            std::mem::align_of::<UnsafeCell<MaybeUninit<T>>>(),
+        )
+        .unwrap();
         unsafe { alloc::alloc_zeroed(layout) as *mut UnsafeCell<MaybeUninit<T>> }
     }
 }
