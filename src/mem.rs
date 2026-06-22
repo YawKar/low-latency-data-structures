@@ -5,61 +5,78 @@ use std::mem::MaybeUninit;
 use crate::shim::alloc;
 use crate::shim::cell::UnsafeCell;
 
-#[allow(dead_code)]
-pub enum Allocation<T> {
-    HugePages {
-        ptr: *mut UnsafeCell<MaybeUninit<T>>,
-        length: usize,
-    },
-    Global {
-        ptr: *mut UnsafeCell<MaybeUninit<T>>,
-        layout: alloc::Layout,
-    },
-    #[cfg(feature = "tests_loom")]
-    LoomVecBacked {
-        ptr: *mut UnsafeCell<MaybeUninit<T>>,
-        capacity: usize,
-    },
+pub trait Allocation<T> {
+    fn ptr(&self) -> *mut UnsafeCell<MaybeUninit<T>>;
 }
 
-impl<T> Allocation<T> {
-    #[inline(always)]
-    pub fn ptr(&self) -> *mut UnsafeCell<MaybeUninit<T>> {
-        match self {
-            Self::HugePages { ptr, .. } => *ptr,
-            Self::Global { ptr, .. } => *ptr,
-            #[cfg(feature = "tests_loom")]
-            Self::LoomVecBacked { ptr, .. } => *ptr,
-        }
+struct HugePageAllocation<T> {
+    ptr: *mut UnsafeCell<MaybeUninit<T>>,
+    length: usize,
+}
+
+impl<T> Drop for HugePageAllocation<T> {
+    fn drop(&mut self) {
+        unsafe {
+            if libc::munmap(self.ptr.cast(), self.length) == -1 {
+                // TODO: should we panic here or emit an event?
+            }
+        };
     }
 }
 
-impl<T> Drop for Allocation<T> {
+impl<T> Allocation<T> for HugePageAllocation<T> {
+    #[inline]
+    fn ptr(&self) -> *mut UnsafeCell<MaybeUninit<T>> {
+        self.ptr
+    }
+}
+
+#[cfg(not(feature = "tests_loom"))]
+struct GlobalAllocation<T> {
+    ptr: *mut UnsafeCell<MaybeUninit<T>>,
+    layout: alloc::Layout,
+}
+
+#[cfg(not(feature = "tests_loom"))]
+impl<T> Drop for GlobalAllocation<T> {
     fn drop(&mut self) {
-        match self {
-            Allocation::Global { ptr, layout } => {
-                use crate::shim::alloc;
-                unsafe { alloc::dealloc(ptr.cast::<u8>(), *layout) };
-            }
-            Allocation::HugePages { ptr, length } => {
-                unsafe {
-                    if libc::munmap(*ptr.cast(), *length) == -1 {
-                        // TODO: should we panic here or emit an event?
-                    }
-                };
-            }
-            #[cfg(feature = "tests_loom")]
-            Allocation::LoomVecBacked { ptr, capacity } => unsafe {
-                drop(Vec::from_raw_parts(*ptr, *capacity, *capacity))
-            },
-        }
+        unsafe { alloc::dealloc(self.ptr.cast(), self.layout) };
+    }
+}
+
+#[cfg(not(feature = "tests_loom"))]
+impl<T> Allocation<T> for GlobalAllocation<T> {
+    #[inline]
+    fn ptr(&self) -> *mut UnsafeCell<MaybeUninit<T>> {
+        self.ptr
+    }
+}
+
+#[cfg(feature = "tests_loom")]
+struct LoomVecAllocation<T> {
+    ptr: *mut UnsafeCell<MaybeUninit<T>>,
+    capacity: usize,
+}
+
+#[cfg(feature = "tests_loom")]
+impl<T> Drop for LoomVecAllocation<T> {
+    fn drop(&mut self) {
+        unsafe { drop(Vec::from_raw_parts(self.ptr, self.capacity, self.capacity)) };
+    }
+}
+
+#[cfg(feature = "tests_loom")]
+impl<T> Allocation<T> for LoomVecAllocation<T> {
+    #[inline]
+    fn ptr(&self) -> *mut UnsafeCell<MaybeUninit<T>> {
+        self.ptr
     }
 }
 
 /// Allocate a typed buffer with `capacity` uninitialized items each with memory layout of `T`.
 /// Loom tests version.
 #[cfg(feature = "tests_loom")]
-pub fn allocate_buffer<T>(capacity: usize, _use_hugepages: bool) -> Allocation<T> {
+pub fn allocate_buffer<T>(capacity: usize) -> impl Allocation<T> {
     type RealT<T> = UnsafeCell<MaybeUninit<T>>;
     let mut buffer: Vec<RealT<T>> = Vec::with_capacity(capacity);
     for _ in 0..capacity {
@@ -67,46 +84,51 @@ pub fn allocate_buffer<T>(capacity: usize, _use_hugepages: bool) -> Allocation<T
     }
     let ptr = buffer.as_mut_ptr();
     std::mem::forget(buffer);
-    Allocation::LoomVecBacked { ptr, capacity }
+    LoomVecAllocation { ptr, capacity }
 }
 
 /// Allocate a typed buffer with `capacity` uninitialized items each with memory layout of `T`.
 #[cfg(not(feature = "tests_loom"))]
-pub fn allocate_buffer<T>(capacity: usize, use_hugepages: bool) -> Allocation<T> {
-    use crate::shim::alloc;
+pub fn allocate_buffer<T>(capacity: usize) -> impl Allocation<T> {
     let layout_size = alloc::Layout::array::<UnsafeCell<MaybeUninit<T>>>(capacity)
         .unwrap()
         .size();
 
-    if use_hugepages {
-        // Using 2 MiB page size
-        let page_size = 2 * 1024 * 1024;
-        // Round up to page size
-        let alloc_size = (layout_size + page_size - 1) & !(page_size - 1);
-        let ptr = unsafe {
-            libc::mmap(
-                std::ptr::null_mut(),
-                alloc_size,
-                libc::PROT_READ | libc::PROT_WRITE,
-                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_HUGETLB | libc::MAP_HUGE_2MB,
-                -1,
-                0,
-            )
-        };
-        assert_ne!(ptr, libc::MAP_FAILED, "hugepage mmap failed");
-        Allocation::HugePages {
-            ptr: ptr as *mut UnsafeCell<MaybeUninit<T>>,
-            length: alloc_size,
-        }
-    } else {
-        let layout = alloc::Layout::from_size_align(
-            layout_size,
-            std::mem::align_of::<UnsafeCell<MaybeUninit<T>>>(),
+    let layout = alloc::Layout::from_size_align(
+        layout_size,
+        std::mem::align_of::<UnsafeCell<MaybeUninit<T>>>(),
+    )
+    .unwrap();
+    GlobalAllocation {
+        ptr: unsafe { alloc::alloc(layout) } as *mut UnsafeCell<MaybeUninit<T>>,
+        layout,
+    }
+}
+
+/// Allocate a typed buffer with `capacity` uninitialized items each with memory layout of `T`
+/// backed by hugepages.
+pub fn allocate_hugepage_buffer<T>(capacity: usize) -> impl Allocation<T> {
+    let layout_size = alloc::Layout::array::<UnsafeCell<MaybeUninit<T>>>(capacity)
+        .unwrap()
+        .size();
+    // Using 2 MiB page size
+    // TODO: what if host system has a different size?
+    let page_size = 2 * 1024 * 1024;
+    // Round up to page size
+    let alloc_size = (layout_size + page_size - 1) & !(page_size - 1);
+    let ptr = unsafe {
+        libc::mmap(
+            std::ptr::null_mut(),
+            alloc_size,
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_HUGETLB | libc::MAP_HUGE_2MB,
+            -1,
+            0,
         )
-        .unwrap();
-        Allocation::Global {
-            ptr: unsafe { alloc::alloc(layout) } as *mut UnsafeCell<MaybeUninit<T>>,
-            layout,
-        }
+    };
+    assert_ne!(ptr, libc::MAP_FAILED, "hugepage mmap failed");
+    HugePageAllocation {
+        ptr: ptr as *mut UnsafeCell<MaybeUninit<T>>,
+        length: alloc_size,
     }
 }

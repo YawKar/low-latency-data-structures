@@ -9,7 +9,7 @@ pub mod cell {
     pub use std::cell::*;
 
     #[derive(Debug)]
-    pub(crate) struct UnsafeCell<T>(std::cell::UnsafeCell<T>);
+    pub struct UnsafeCell<T>(std::cell::UnsafeCell<T>);
 
     impl<T> UnsafeCell<T> {
         pub(crate) fn with_mut<R>(&self, f: impl FnOnce(*mut T) -> R) -> R {

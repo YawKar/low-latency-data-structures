@@ -1,15 +1,22 @@
+use std::marker::PhantomData;
+
 use anyhow::bail;
 
-use crate::mem::{Allocation, allocate_buffer};
+use crate::mem::{Allocation, allocate_buffer, allocate_hugepage_buffer};
 use crate::shim::sync::{Arc, atomic};
 use crate::spsc::consumer::{Consumer, ConsumerState};
 use crate::spsc::producer::{Producer, ProducerState};
 
-pub fn new<T>(capacity: usize) -> anyhow::Result<(Producer<T>, Consumer<T>)> {
+pub fn new<T>(
+    capacity: usize,
+) -> anyhow::Result<(
+    Producer<T, impl Allocation<T>>,
+    Consumer<T, impl Allocation<T>>,
+)> {
     if !capacity.is_power_of_two() {
         bail!("the given capacity is not power of two: {capacity}");
     }
-    let slots_allocation = allocate_buffer(capacity, false);
+    let slots_allocation = allocate_buffer::<T>(capacity);
     let q = Arc::new(Queue {
         producer_state: ProducerState {
             tail: Default::default(),
@@ -21,17 +28,23 @@ pub fn new<T>(capacity: usize) -> anyhow::Result<(Producer<T>, Consumer<T>)> {
         },
         slots_allocation,
         capacity,
+        _t: PhantomData,
     });
     let producer = Producer::new(q.clone());
     let consumer = Consumer::new(q);
     Ok((producer, consumer))
 }
 
-pub fn new_hugepage_backed<T>(capacity: usize) -> anyhow::Result<(Producer<T>, Consumer<T>)> {
+pub fn new_hugepage_backed<T>(
+    capacity: usize,
+) -> anyhow::Result<(
+    Producer<T, impl Allocation<T>>,
+    Consumer<T, impl Allocation<T>>,
+)> {
     if !capacity.is_power_of_two() {
         bail!("the given capacity is not power of two: {capacity}");
     }
-    let slots_allocation = allocate_buffer(capacity, true);
+    let slots_allocation = allocate_hugepage_buffer(capacity);
     let q = Arc::new(Queue {
         producer_state: ProducerState {
             tail: Default::default(),
@@ -43,6 +56,7 @@ pub fn new_hugepage_backed<T>(capacity: usize) -> anyhow::Result<(Producer<T>, C
         },
         slots_allocation,
         capacity,
+        _t: PhantomData,
     });
     let producer = Producer::new(q.clone());
     let consumer = Consumer::new(q);
@@ -50,14 +64,15 @@ pub fn new_hugepage_backed<T>(capacity: usize) -> anyhow::Result<(Producer<T>, C
 }
 
 #[repr(C)]
-pub(super) struct Queue<T> {
+pub(super) struct Queue<T, AllocT: Allocation<T>> {
     producer_state: ProducerState,
     consumer_state: ConsumerState,
-    slots_allocation: Allocation<T>,
+    slots_allocation: AllocT,
     capacity: usize,
+    _t: PhantomData<T>,
 }
 
-impl<T> Queue<T> {
+impl<T, AllocT: Allocation<T>> Queue<T, AllocT> {
     #[inline]
     pub fn pop(&self) -> Option<T> {
         let head = self.consumer_state.head.load(atomic::Ordering::Relaxed);
@@ -131,7 +146,7 @@ impl<T> Queue<T> {
     }
 }
 
-impl<T> Drop for Queue<T> {
+impl<T, AllocT: Allocation<T>> Drop for Queue<T, AllocT> {
     fn drop(&mut self) {
         let head = self.consumer_state.head.load(atomic::Ordering::Relaxed);
         let tail = self.producer_state.tail.load(atomic::Ordering::Relaxed);
