@@ -1,9 +1,6 @@
-use std::mem::MaybeUninit;
-
 use anyhow::bail;
 
-use crate::mem::allocate_buffer;
-use crate::shim::cell::UnsafeCell;
+use crate::mem::{Allocation, allocate_buffer};
 use crate::shim::sync::{Arc, atomic};
 use crate::spsc::consumer::{Consumer, ConsumerState};
 use crate::spsc::producer::{Producer, ProducerState};
@@ -12,7 +9,7 @@ pub fn new<T>(capacity: usize) -> anyhow::Result<(Producer<T>, Consumer<T>)> {
     if !capacity.is_power_of_two() {
         bail!("the given capacity is not power of two: {capacity}");
     }
-    let slots_buffer = allocate_buffer(capacity, false);
+    let slots_allocation = allocate_buffer(capacity, false);
     let q = Arc::new(Queue {
         producer_state: ProducerState {
             tail: Default::default(),
@@ -22,7 +19,29 @@ pub fn new<T>(capacity: usize) -> anyhow::Result<(Producer<T>, Consumer<T>)> {
             head: Default::default(),
             cached_tail: Default::default(),
         },
-        slots: slots_buffer,
+        slots_allocation,
+        capacity,
+    });
+    let producer = Producer::new(q.clone());
+    let consumer = Consumer::new(q);
+    Ok((producer, consumer))
+}
+
+pub fn new_hugepage_backed<T>(capacity: usize) -> anyhow::Result<(Producer<T>, Consumer<T>)> {
+    if !capacity.is_power_of_two() {
+        bail!("the given capacity is not power of two: {capacity}");
+    }
+    let slots_allocation = allocate_buffer(capacity, true);
+    let q = Arc::new(Queue {
+        producer_state: ProducerState {
+            tail: Default::default(),
+            cached_head: Default::default(),
+        },
+        consumer_state: ConsumerState {
+            head: Default::default(),
+            cached_tail: Default::default(),
+        },
+        slots_allocation,
         capacity,
     });
     let producer = Producer::new(q.clone());
@@ -34,7 +53,7 @@ pub fn new<T>(capacity: usize) -> anyhow::Result<(Producer<T>, Consumer<T>)> {
 pub(super) struct Queue<T> {
     producer_state: ProducerState,
     consumer_state: ConsumerState,
-    slots: *mut UnsafeCell<MaybeUninit<T>>,
+    slots_allocation: Allocation<T>,
     capacity: usize,
 }
 
@@ -48,7 +67,10 @@ impl<T> Queue<T> {
                 return None;
             }
         }
-        let slot_ptr = self.slots.wrapping_add(head & (self.capacity - 1));
+        let slot_ptr = self
+            .slots_allocation
+            .ptr()
+            .wrapping_add(head & (self.capacity - 1));
         // SAFETY: we read the cached_tail value that was released some time ago, it means we are
         // guaranteed to see written value here. And it's not copied more than once because we
         // increment head on the next line.
@@ -81,7 +103,10 @@ impl<T> Queue<T> {
                 return Some(item);
             }
         }
-        let slot_ptr = self.slots.wrapping_add(tail & (self.capacity - 1));
+        let slot_ptr = self
+            .slots_allocation
+            .ptr()
+            .wrapping_add(tail & (self.capacity - 1));
         // SAFETY: slot_ptr can't point to something after the slots buffer because of `% capacity`
         // above. And it can be converted to a reference to T because T is self-contained bitwise
         // (&T is 'static during the with_mut closure).
@@ -111,7 +136,10 @@ impl<T> Drop for Queue<T> {
         let head = self.consumer_state.head.load(atomic::Ordering::Relaxed);
         let tail = self.producer_state.tail.load(atomic::Ordering::Relaxed);
         for i in head..tail {
-            let slot_ptr = self.slots.wrapping_add(i & (self.capacity - 1));
+            let slot_ptr = self
+                .slots_allocation
+                .ptr()
+                .wrapping_add(i & (self.capacity - 1));
             // SAFETY: it's not null because `i & (sef.capacity - 1)` limits it to [0;
             // allocated_cap). And it can be safely converted to a reference because T is self
             // contained bitwise.
@@ -120,29 +148,6 @@ impl<T> Drop for Queue<T> {
                     ptr.as_mut_unchecked().assume_init_drop();
                 })
             }
-        }
-        #[cfg(feature = "tests_loom")]
-        unsafe {
-            drop(Vec::from_raw_parts(
-                self.slots,
-                self.capacity,
-                self.capacity,
-            ))
-        }
-        #[cfg(not(feature = "tests_loom"))]
-        {
-            use crate::shim::alloc;
-            let layout = alloc::Layout::array::<UnsafeCell<MaybeUninit<T>>>(self.capacity).unwrap();
-            // TODO: when hugepages are used, should use libc::munmap instead
-            // SAFETY: Queue is share-owned by 2 Arc objects (Producer/Consumer), so double-free is
-            // not possible unless Producer/Consumer are Sync
-            unsafe {
-                static_assertions::assert_impl_all!(Producer<u32>: Send);
-                static_assertions::assert_not_impl_any!(Producer<u32>: Sync);
-                static_assertions::assert_impl_all!(Consumer<u32>: Send);
-                static_assertions::assert_not_impl_any!(Consumer<u32>: Sync);
-                alloc::dealloc(self.slots.cast::<u8>(), layout)
-            };
         }
     }
 }
@@ -153,7 +158,10 @@ mod tests_basic {
     use std::rc::Rc;
     use std::thread;
 
-    use super::*;
+    #[cfg(not(feature = "tests_hugepage"))]
+    use super::new;
+    #[cfg(feature = "tests_hugepage")]
+    use super::new_hugepage_backed as new;
     use crate::shim::cell::Cell;
 
     #[test]
@@ -182,8 +190,14 @@ mod tests_basic {
 
     #[test]
     fn allows_queues_with_powers_of_two_capacity() -> anyhow::Result<()> {
-        for power in 0..20 {
-            new::<()>(2usize.pow(power))?;
+        for power in 0..if cfg!(feature = "tests_hugepage") {
+            6 // if it fails on your machine even after `just enable-hugepages`, probably your
+        // hugepage size is set to something less than 2MiB
+        } else {
+            20
+        } {
+            // Hugepages allocation won't work with `()` type btw
+            new::<usize>(2usize.pow(power))?;
         }
         Ok(())
     }
@@ -318,6 +332,11 @@ mod tests_basic {
 #[cfg(feature = "tests_loom")]
 mod tests_loom {
     use super::*;
+
+    static_assertions::assert_cfg!(
+        not(feature = "tests_hugepage"),
+        "tests_loom incompatible with tests_hugepage as loom uses custom buffer allocator",
+    );
 
     #[test]
     fn concurrent_push_pop() {
