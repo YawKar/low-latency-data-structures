@@ -15,6 +15,12 @@ init:
     cargo install cargo-show-asm
     cargo check --features tests_loom
     cargo check --features tests_basic
+[group("Bootstrap")]
+enable-hugepages:
+    sudo sysctl -w vm.nr_hugepages=16
+[group("Bootstrap")]
+disable-hugepages:
+    sudo sysctl -w vm.nr_hugepages=0
 
 # format everything
 [group("Code Style")]
@@ -188,17 +194,22 @@ test-all: test-basic test-loom test-dhat
 # Run basic tests
 [group("Tests")]
 test-basic:
-    cargo test --no-default-features --features tests_basic
+    @cargo test --no-default-features --features tests_basic
+    @if [[ $(sysctl --values vm.nr_hugepages) != "0" ]]; then \
+        cargo test --no-default-features --features tests_basic,tests_hugepage; \
+    else \
+        echo "{{ style("warning") }}[WARN]{{ NORMAL }} Your system doesn't have hugepages to run tests_hugepage"; \
+    fi
 
 # Run loom tests (requires loom shim)
 [group("Tests")]
 test-loom:
-    cargo test --no-default-features --features tests_loom
+    @cargo test --no-default-features --features tests_loom
 
 # Run dhat tests (requires dhat global allocator)
 [group("Tests")]
 test-dhat:
-    cargo test --no-default-features --features tests_dhat
+    @cargo test --no-default-features --features tests_dhat
 
 [group("Benches")]
 view-bench-report:
