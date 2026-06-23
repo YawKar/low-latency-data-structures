@@ -12,15 +12,18 @@ pub(super) struct ConsumerState {
     pub cached_tail: Cell<usize>,
 }
 
-pub struct Consumer<T, AllocT: Allocation<T>> {
-    inner: Arc<Queue<T, AllocT>>,
+pub struct Consumer<T, const CAPACITY: usize, AllocT: Allocation<T>> {
+    inner: Arc<Queue<T, CAPACITY, AllocT>>,
     _not_sync: PhantomData<*const ()>,
 }
 
-unsafe impl<T: Send, AllocT: Allocation<T> + Send> Send for Consumer<T, AllocT> {}
+unsafe impl<T: Send, const CAPACITY: usize, AllocT: Allocation<T> + Send> Send
+    for Consumer<T, CAPACITY, AllocT>
+{
+}
 
-impl<T, AllocT: Allocation<T>> Consumer<T, AllocT> {
-    pub(super) fn new(queue: Arc<Queue<T, AllocT>>) -> Self {
+impl<T, const CAPACITY: usize, AllocT: Allocation<T>> Consumer<T, CAPACITY, AllocT> {
+    pub(super) fn new(queue: Arc<Queue<T, CAPACITY, AllocT>>) -> Self {
         Self {
             inner: queue,
             _not_sync: PhantomData,
@@ -48,5 +51,5 @@ mod tests {
 
     // Shouldn't be possible to construct Arc<Consumer<T>> and then use it from different threads as it
     // will break the requirement of *Single* producer *Single* consumer queue.
-    static_assertions::assert_not_impl_any!(Consumer<u32, NeverAlloc>: Sync);
+    static_assertions::assert_not_impl_any!(Consumer<u32, 0, NeverAlloc>: Sync);
 }
