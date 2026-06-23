@@ -1,22 +1,21 @@
 use std::marker::PhantomData;
 
-use anyhow::bail;
-
 use crate::mem::{Allocation, allocate_buffer, allocate_hugepage_buffer};
 use crate::shim::sync::{Arc, atomic};
 use crate::spsc::consumer::{Consumer, ConsumerState};
 use crate::spsc::producer::{Producer, ProducerState};
 
-pub fn new<T>(
-    capacity: usize,
-) -> anyhow::Result<(
-    Producer<T, impl Allocation<T>>,
-    Consumer<T, impl Allocation<T>>,
-)> {
-    if !capacity.is_power_of_two() {
-        bail!("the given capacity is not power of two: {capacity}");
-    }
-    let slots_allocation = allocate_buffer::<T>(capacity);
+pub fn new<T, const CAPACITY: usize>() -> (
+    Producer<T, CAPACITY, impl Allocation<T>>,
+    Consumer<T, CAPACITY, impl Allocation<T>>,
+) {
+    const {
+        assert!(
+            CAPACITY.is_power_of_two(),
+            "Given capacity is not a power of two!"
+        );
+    };
+    let slots_allocation = allocate_buffer::<T>(CAPACITY);
     let q = Arc::new(Queue {
         producer_state: ProducerState {
             tail: Default::default(),
@@ -27,24 +26,24 @@ pub fn new<T>(
             cached_tail: Default::default(),
         },
         slots_allocation,
-        capacity,
         _t: PhantomData,
     });
     let producer = Producer::new(q.clone());
     let consumer = Consumer::new(q);
-    Ok((producer, consumer))
+    (producer, consumer)
 }
 
-pub fn new_hugepage_backed<T>(
-    capacity: usize,
-) -> anyhow::Result<(
-    Producer<T, impl Allocation<T>>,
-    Consumer<T, impl Allocation<T>>,
-)> {
-    if !capacity.is_power_of_two() {
-        bail!("the given capacity is not power of two: {capacity}");
-    }
-    let slots_allocation = allocate_hugepage_buffer(capacity);
+pub fn new_hugepage_backed<T, const CAPACITY: usize>() -> (
+    Producer<T, CAPACITY, impl Allocation<T>>,
+    Consumer<T, CAPACITY, impl Allocation<T>>,
+) {
+    const {
+        assert!(
+            CAPACITY.is_power_of_two(),
+            "Given capacity is not a power of two!"
+        );
+    };
+    let slots_allocation = allocate_hugepage_buffer(CAPACITY);
     let q = Arc::new(Queue {
         producer_state: ProducerState {
             tail: Default::default(),
@@ -55,24 +54,22 @@ pub fn new_hugepage_backed<T>(
             cached_tail: Default::default(),
         },
         slots_allocation,
-        capacity,
         _t: PhantomData,
     });
     let producer = Producer::new(q.clone());
     let consumer = Consumer::new(q);
-    Ok((producer, consumer))
+    (producer, consumer)
 }
 
 #[repr(C)]
-pub(super) struct Queue<T, AllocT: Allocation<T>> {
+pub(super) struct Queue<T, const CAPACITY: usize, AllocT: Allocation<T>> {
     producer_state: ProducerState,
     consumer_state: ConsumerState,
     slots_allocation: AllocT,
-    capacity: usize,
     _t: PhantomData<T>,
 }
 
-impl<T, AllocT: Allocation<T>> Queue<T, AllocT> {
+impl<T, const CAPACITY: usize, AllocT: Allocation<T>> Queue<T, CAPACITY, AllocT> {
     #[inline]
     pub fn pop(&self) -> Option<T> {
         let head = self.consumer_state.head.load(atomic::Ordering::Relaxed);
@@ -85,7 +82,7 @@ impl<T, AllocT: Allocation<T>> Queue<T, AllocT> {
         let slot_ptr = self
             .slots_allocation
             .ptr()
-            .wrapping_add(head & (self.capacity - 1));
+            .wrapping_add(head & (CAPACITY - 1));
         // SAFETY: we read the cached_tail value that was released some time ago, it means we are
         // guaranteed to see written value here. And it's not copied more than once because we
         // increment head on the next line.
@@ -111,8 +108,8 @@ impl<T, AllocT: Allocation<T>> Queue<T, AllocT> {
     #[inline]
     pub fn push(&self, item: T) -> Option<T> {
         let tail = self.producer_state.tail.load(atomic::Ordering::Relaxed);
-        debug_assert!(tail.wrapping_sub(self.producer_state.cached_head.get()) <= self.capacity);
-        if tail.wrapping_sub(self.producer_state.cached_head.get()) >= self.capacity {
+        debug_assert!(tail.wrapping_sub(self.producer_state.cached_head.get()) <= CAPACITY);
+        if tail.wrapping_sub(self.producer_state.cached_head.get()) >= CAPACITY {
             // it's still may not be full
             if self.push_slow_check(tail) {
                 return Some(item);
@@ -121,7 +118,7 @@ impl<T, AllocT: Allocation<T>> Queue<T, AllocT> {
         let slot_ptr = self
             .slots_allocation
             .ptr()
-            .wrapping_add(tail & (self.capacity - 1));
+            .wrapping_add(tail & (CAPACITY - 1));
         // SAFETY: slot_ptr can't point to something after the slots buffer because of `% capacity`
         // above. And it can be converted to a reference to T because T is self-contained bitwise
         // (&T is 'static during the with_mut closure).
@@ -141,20 +138,17 @@ impl<T, AllocT: Allocation<T>> Queue<T, AllocT> {
         self.producer_state
             .cached_head
             .set(self.consumer_state.head.load(atomic::Ordering::Acquire));
-        debug_assert!(tail.wrapping_sub(self.producer_state.cached_head.get()) <= self.capacity);
-        tail.wrapping_sub(self.producer_state.cached_head.get()) >= self.capacity
+        debug_assert!(tail.wrapping_sub(self.producer_state.cached_head.get()) <= CAPACITY);
+        tail.wrapping_sub(self.producer_state.cached_head.get()) >= CAPACITY
     }
 }
 
-impl<T, AllocT: Allocation<T>> Drop for Queue<T, AllocT> {
+impl<T, const CAPACITY: usize, AllocT: Allocation<T>> Drop for Queue<T, CAPACITY, AllocT> {
     fn drop(&mut self) {
         let head = self.consumer_state.head.load(atomic::Ordering::Relaxed);
         let tail = self.producer_state.tail.load(atomic::Ordering::Relaxed);
         for i in head..tail {
-            let slot_ptr = self
-                .slots_allocation
-                .ptr()
-                .wrapping_add(i & (self.capacity - 1));
+            let slot_ptr = self.slots_allocation.ptr().wrapping_add(i & (CAPACITY - 1));
             // SAFETY: it's not null because `i & (sef.capacity - 1)` limits it to [0;
             // allocated_cap). And it can be safely converted to a reference because T is self
             // contained bitwise.
@@ -173,6 +167,9 @@ mod tests_basic {
     use std::rc::Rc;
     use std::thread;
 
+    use seq_macro::seq;
+    use should_it_compile::should_not_compile;
+
     #[cfg(not(feature = "tests_hugepage"))]
     use super::new;
     #[cfg(feature = "tests_hugepage")]
@@ -180,8 +177,8 @@ mod tests_basic {
     use crate::shim::cell::Cell;
 
     #[test]
-    fn move_producer_consumer_to_threads() -> anyhow::Result<()> {
-        let (producer, consumer) = new(2)?;
+    fn move_producer_consumer_to_threads() {
+        let (producer, consumer) = new::<_, 2>();
         thread::spawn(move || {
             producer.push(123);
         })
@@ -192,46 +189,61 @@ mod tests_basic {
         })
         .join()
         .unwrap();
-        Ok(())
     }
 
     #[test]
-    fn handoff_one_value() -> anyhow::Result<()> {
-        let (producer, consumer) = new(2)?;
+    fn handoff_one_value() {
+        let (producer, consumer) = new::<_, 2>();
         assert_eq!(producer.push(123), None);
         assert_eq!(consumer.pop(), Some(123));
-        Ok(())
     }
 
     #[test]
-    fn allows_queues_with_powers_of_two_capacity() -> anyhow::Result<()> {
-        for power in 0..if cfg!(feature = "tests_hugepage") {
-            6 // if it fails on your machine even after `just enable-hugepages`, probably your
-        // hugepage size is set to something less than 2MiB
-        } else {
-            20
-        } {
-            // Hugepages allocation won't work with `()` type btw
-            new::<usize>(2usize.pow(power))?;
-        }
-        Ok(())
+    fn allows_queues_with_powers_of_two_capacity() {
+        #[cfg(feature = "tests_hugepage")]
+        seq!(N in 0..6 {
+            {
+                const POWER: usize = 2usize.pow(N);
+                new::<u32, POWER>();
+            }
+        });
+        #[cfg(not(feature = "tests_hugepage"))]
+        seq!(N in 0..20 {
+            {
+                const POWER: usize = 2usize.pow(N);
+                new::<u32, POWER>();
+            }
+        });
     }
 
     #[test]
-    fn prohibits_queues_with_not_powers_of_two_capacity() -> anyhow::Result<()> {
-        for power in 2..20 {
-            assert!(matches!(new::<()>(2usize.pow(power) - 1), Err(_)));
-            assert!(matches!(new::<()>(2usize.pow(power) + 1), Err(_)));
-        }
-        Ok(())
+    fn prohibits_queues_with_not_powers_of_two_capacity() {
+        seq!(N in 2..20 {
+            {
+                should_not_compile! {
+                    fn a() {
+                        const POWER: usize = 2usize.pow(N);
+                        const LESS: usize = POWER - 1;
+                        const MORE: usize = POWER + 1;
+                        new::<u32, LESS>();
+                    }
+                    fn b() {
+                        const POWER: usize = 2usize.pow(N);
+                        const LESS: usize = POWER - 1;
+                        const MORE: usize = POWER + 1;
+                        new::<u32, MORE>();
+                    }
+                };
+            }
+        });
     }
 
     #[test]
-    fn drops_unread_items() -> anyhow::Result<()> {
+    fn drops_unread_items() {
         let counter = Rc::new(Cell::new(0));
         #[derive(Debug, PartialEq)]
         struct Droppable {
-            counter: Rc<Cell<i32>>,
+            counter: Rc<Cell<usize>>,
         }
         impl Drop for Droppable {
             fn drop(&mut self) {
@@ -239,45 +251,42 @@ mod tests_basic {
                 self.counter.set(cnt + 1);
             }
         }
-        let capacity = 64i32;
-        let (producer, consumer) = new(capacity as usize)?;
-        for _ in 0..capacity {
+        const CAPACITY: usize = 64;
+        let (producer, consumer) = new::<_, CAPACITY>();
+        for _ in 0..CAPACITY {
             let counter = counter.clone();
             assert_eq!(producer.push(Droppable { counter }), None);
         }
-        let read = capacity / 2;
+        let read = CAPACITY / 2;
         for _ in 0..read {
             assert!(matches!(consumer.pop(), Some(_)));
         }
         assert_eq!(read, counter.get());
         drop(producer);
         drop(consumer);
-        assert_eq!(capacity, counter.get());
-        Ok(())
+        assert_eq!(CAPACITY, counter.get());
     }
 
     #[test]
-    fn empty_returns_none() -> anyhow::Result<()> {
-        let (_, consumer) = new::<i32>(4)?;
+    fn empty_returns_none() {
+        let (_, consumer) = new::<i32, 4>();
         assert_eq!(consumer.pop(), None);
         assert_eq!(consumer.pop(), None);
-        Ok(())
     }
 
     #[test]
-    fn full_returns_item_back() -> anyhow::Result<()> {
-        let (producer, _) = new::<i32>(2)?;
+    fn full_returns_item_back() {
+        let (producer, _) = new::<i32, 2>();
         assert_eq!(producer.push(1), None);
         assert_eq!(producer.push(2), None);
         // Full — item comes back untouched
         assert_eq!(producer.push(3), Some(3));
         assert_eq!(producer.push(4), Some(4));
-        Ok(())
     }
 
     #[test]
     fn fifo_ordering() -> anyhow::Result<()> {
-        let (producer, consumer) = new(8)?;
+        let (producer, consumer) = new::<_, 8>();
         for i in 0..8 {
             assert_eq!(producer.push(i), None);
         }
@@ -288,58 +297,54 @@ mod tests_basic {
     }
 
     #[test]
-    fn wraparound_n_laps() -> anyhow::Result<()> {
-        let capacity = 4;
+    fn wraparound_n_laps() {
+        const CAPACITY: usize = 4;
         let laps = 100;
-        let (producer, consumer) = new(capacity)?;
+        let (producer, consumer) = new::<_, CAPACITY>();
         for lap in 0..laps {
-            for i in 0..capacity {
-                let val = lap * capacity + i;
+            for i in 0..CAPACITY {
+                let val = lap * CAPACITY + i;
                 assert_eq!(producer.push(val), None, "push failed at lap {lap}, i {i}");
             }
             // Queue is full
             assert_eq!(producer.push(9999), Some(9999));
-            for i in 0..capacity {
-                let val = lap * capacity + i;
+            for i in 0..CAPACITY {
+                let val = lap * CAPACITY + i;
                 assert_eq!(consumer.pop(), Some(val), "wrong value at lap {lap}, i {i}");
             }
             // Queue is empty
             assert_eq!(consumer.pop(), None);
         }
-        Ok(())
     }
 
     #[test]
-    fn interleaved_push_pop() -> anyhow::Result<()> {
-        let (producer, consumer) = new(2)?;
+    fn interleaved_push_pop() {
+        let (producer, consumer) = new::<_, 2>();
         // Push 1, pop 1, repeat — tests wraparound with tiny queue
         for i in 0..1000 {
             assert_eq!(producer.push(i), None);
             assert_eq!(consumer.pop(), Some(i));
         }
-        Ok(())
     }
 
     #[test]
-    fn capacity_one() -> anyhow::Result<()> {
-        let (producer, consumer) = new(1)?;
+    fn capacity_one() {
+        let (producer, consumer) = new::<_, 1>();
         assert_eq!(consumer.pop(), None);
         assert_eq!(producer.push(42), None);
         assert_eq!(producer.push(43), Some(43)); // full
         assert_eq!(consumer.pop(), Some(42));
         assert_eq!(consumer.pop(), None); // empty again
-        Ok(())
     }
 
     #[test]
-    fn move_only_type() -> anyhow::Result<()> {
+    fn move_only_type() {
         // Verify non-Copy, non-Clone types work
-        let (producer, consumer) = new(4)?;
+        let (producer, consumer) = new::<_, 4>();
         let s = String::from("hello");
         assert_eq!(producer.push(s), None);
         let got = consumer.pop().unwrap();
         assert_eq!(got, "hello");
-        Ok(())
     }
 }
 
@@ -356,7 +361,7 @@ mod tests_loom {
     #[test]
     fn concurrent_push_pop() {
         loom::model(|| {
-            let (producer, consumer) = new::<i32>(4).unwrap();
+            let (producer, consumer) = new::<i32, 4>();
 
             let t1 = loom::thread::spawn(move || {
                 producer.push(1);
@@ -387,7 +392,7 @@ mod tests_loom {
     #[test]
     fn concurrent_with_full_queue() {
         loom::model(|| {
-            let (producer, consumer) = new::<i32>(1).unwrap();
+            let (producer, consumer) = new::<i32, 1>();
 
             let t1 = loom::thread::spawn(move || {
                 for i in 0..3 {
@@ -418,7 +423,7 @@ mod tests_loom {
     #[test]
     fn concurrent_no_values_lost() {
         loom::model(|| {
-            let (producer, consumer) = new::<i32>(2).unwrap();
+            let (producer, consumer) = new::<i32, 2>();
 
             let t1 = loom::thread::spawn(move || {
                 for i in 0..3 {
@@ -454,7 +459,7 @@ mod tests_loom {
     #[should_panic = "Causality violation: Concurrent write accesses to `UnsafeCell`.\n"]
     fn loom_detects_concurrent_producers() {
         loom::model(|| {
-            let (producer, _) = new::<i32>(16).unwrap();
+            let (producer, _) = new::<i32, 16>();
             let producer = Arc::new(producer);
             let p1 = producer.clone();
             let t1 = loom::thread::spawn(move || {
@@ -474,7 +479,7 @@ mod tests_loom {
     #[should_panic = "Causality violation: Concurrent read and write accesses.\n"]
     fn loom_detects_concurrent_consumers() {
         loom::model(|| {
-            let (_, consumer) = new::<i32>(16).unwrap();
+            let (_, consumer) = new::<i32, 16>();
             let consumer = Arc::new(consumer);
             let c1 = consumer.clone();
             let t1 = loom::thread::spawn(move || {
@@ -501,7 +506,7 @@ mod tests_dhat {
     #[test]
     fn hot_path_zero_allocations() {
         let _profiler = dhat::Profiler::builder().testing().build();
-        let (producer, consumer) = new::<u64>(1024).unwrap();
+        let (producer, consumer) = new::<u64, 1024>();
 
         let before = dhat::HeapStats::get();
 

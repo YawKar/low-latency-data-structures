@@ -7,9 +7,9 @@ use quanta::Clock;
 
 fn main() {
     let clock = Arc::new(quanta::Clock::new());
-    let capacity = 65536;
+    const CAPACITY: usize = 65536;
     let iterations: u64 = 1_000_000_000;
-    let (producer, consumer) = spsc::new::<u64>(capacity).unwrap();
+    let (producer, consumer) = spsc::new::<u64, CAPACITY>();
 
     let core_ids = core_affinity::get_core_ids().unwrap();
     // Use `lscpu --all --extended` to find cores sharing L3
@@ -62,7 +62,7 @@ fn main() {
 
     println!(
         "SPSC Latency: {} iterations, capacity {}",
-        iterations, capacity
+        iterations, CAPACITY,
     );
     println!(
         "  p50:   {:>6} cycles  ({:>4} ns)",
