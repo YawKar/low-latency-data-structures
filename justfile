@@ -228,6 +228,14 @@ setup-cores cores:
         set -x; \
         echo performance | sudo tee /sys/devices/system/cpu/cpu$i/cpufreq/scaling_governor; \
         set +x; \
+        sibling=$(cat /sys/devices/system/cpu/cpu$i/topology/thread_siblings_list \
+            | tr ',' '\n' | grep -v "^$i$" || true); \
+        if [ -n "$sibling" ] && [ "$sibling" != "0" ]; then \
+            set -x; \
+            echo 0 | sudo tee /sys/devices/system/cpu/cpu$sibling/online; \
+            set +x; \
+            echo "offlined sibling $sibling of $i"; \
+        fi \
     done
     echo 1 | sudo tee /sys/devices/system/cpu/intel_pstate/no_turbo
 
@@ -239,6 +247,14 @@ unsetup-cores cores:
         set -x; \
         echo powersave | sudo tee /sys/devices/system/cpu/cpu$i/cpufreq/scaling_governor; \
         set +x; \
+        sibling=$(cat /sys/devices/system/cpu/cpu$i/topology/thread_siblings_list \
+            | tr ',' '\n' | grep -v "^$i$" || true); \
+        if [ -n "$sibling" ] && [ "$sibling" != "0" ]; then \
+            set -x; \
+            echo 1 | sudo tee /sys/devices/system/cpu/cpu$sibling/online; \
+            set +x; \
+            echo "onlined sibling $sibling of $i"; \
+        fi \
     done
     echo 0 | sudo tee /sys/devices/system/cpu/intel_pstate/no_turbo
 
@@ -250,4 +266,4 @@ bench-spsc-micro:
 # Full bench. Requires additional setup for isolated cpu and etc.
 [group("Benches")]
 bench-spsc-full cores:
-    taskset -c {{ cores }} cargo run --release --example spsc_bench_handoff
+    sudo bash -c "ulimit -l 32000 && cargo build --release --example spsc_bench_handoff && taskset -c {{ cores }} cargo run --release --example spsc_bench_handoff"
