@@ -220,7 +220,32 @@ test-dhat:
 view-bench-report:
     xdg-open ./target/criterion/report/index.html
 
+# Setup these cores for benchmarking. just setup-cores 7,8
 [group("Benches")]
-bench-spsc:
-    # TODO: requires some meta-selection to find cpu cores that share L cache
-    taskset -c 0,1 cargo bench --no-default-features --bench spsc
+setup-cores cores:
+    cores="{{ cores }}"; \
+    for i in ${cores//,/ }; do \
+        set -x; \
+        echo performance | sudo tee /sys/devices/system/cpu/cpu$i/cpufreq/scaling_governor; \
+        set +x; \
+    done
+
+# Un-setup these cores for benchmarking. just unsetup-cores 7,8
+[group("Benches")]
+unsetup-cores cores:
+    cores="{{ cores }}"; \
+    for i in ${cores//,/ }; do \
+        set -x; \
+        echo powersave | sudo tee /sys/devices/system/cpu/cpu$i/cpufreq/scaling_governor; \
+        set +x; \
+    done
+
+# Benches only very tiny single-threaded deterministic flow
+[group("Benches")]
+bench-spsc-micro:
+    cargo bench --no-default-features --bench spsc
+
+# Full bench. Requires additional setup for isolated cpu and etc.
+[group("Benches")]
+bench-spsc-full cores:
+    taskset -c {{ cores }} cargo run --release --example spsc_bench_handoff

@@ -33,3 +33,9 @@ hdrhistogram = "7.5.4"
 [[bench]]
 name = "spsc"
 harness = false
+
+[[example]]
+name = "spsc_bench_handoff"
+path = "examples/spsc/bench_handoff.rs"
+harness = false
+
