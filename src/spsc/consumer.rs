@@ -26,7 +26,7 @@ impl<T> Allocation<T> for () {
 // will break the requirement of *Single* producer *Single* consumer queue.
 static_assertions::assert_not_impl_any!(Consumer<u32, ()>: Sync);
 
-unsafe impl<T: Send, AllocT: Allocation<T>> Send for Consumer<T, AllocT> {}
+unsafe impl<T: Send, AllocT: Allocation<T> + Send> Send for Consumer<T, AllocT> {}
 
 impl<T, AllocT: Allocation<T>> Consumer<T, AllocT> {
     pub(super) fn new(queue: Arc<Queue<T, AllocT>>) -> Self {
