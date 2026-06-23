@@ -147,7 +147,9 @@ impl<T, const CAPACITY: usize, AllocT: Allocation<T>> Drop for Queue<T, CAPACITY
     fn drop(&mut self) {
         let head = self.consumer_state.head.load(atomic::Ordering::Relaxed);
         let tail = self.producer_state.tail.load(atomic::Ordering::Relaxed);
-        for i in head..tail {
+        let count = tail.wrapping_sub(head);
+        for k in 0..count {
+            let i = head.wrapping_add(k);
             let slot_ptr = self.slots_allocation.ptr().wrapping_add(i & (CAPACITY - 1));
             // SAFETY: it's not null because `i & (sef.capacity - 1)` limits it to [0;
             // allocated_cap). And it can be safely converted to a reference because T is self
