@@ -75,7 +75,7 @@ impl<T, const CAPACITY: usize, AllocT: Allocation<T>> Queue<T, CAPACITY, AllocT>
         let head = self.consumer_state.head.load(atomic::Ordering::Relaxed);
         if head == self.consumer_state.cached_tail.get() {
             // it's still may not be empty
-            if self.pop_slow_check(head) {
+            if self.pop_still_empty(head) {
                 return None;
             }
         }
@@ -98,7 +98,7 @@ impl<T, const CAPACITY: usize, AllocT: Allocation<T>> Queue<T, CAPACITY, AllocT>
     }
 
     #[cold]
-    fn pop_slow_check(&self, head: usize) -> bool {
+    fn pop_still_empty(&self, head: usize) -> bool {
         self.consumer_state
             .cached_tail
             .set(self.producer_state.tail.load(atomic::Ordering::Acquire));
@@ -111,7 +111,7 @@ impl<T, const CAPACITY: usize, AllocT: Allocation<T>> Queue<T, CAPACITY, AllocT>
         debug_assert!(tail.wrapping_sub(self.producer_state.cached_head.get()) <= CAPACITY);
         if tail.wrapping_sub(self.producer_state.cached_head.get()) >= CAPACITY {
             // it's still may not be full
-            if self.push_slow_check(tail) {
+            if self.push_still_full(tail) {
                 return Some(item);
             }
         }
@@ -134,7 +134,7 @@ impl<T, const CAPACITY: usize, AllocT: Allocation<T>> Queue<T, CAPACITY, AllocT>
     }
 
     #[cold]
-    fn push_slow_check(&self, tail: usize) -> bool {
+    fn push_still_full(&self, tail: usize) -> bool {
         self.producer_state
             .cached_head
             .set(self.consumer_state.head.load(atomic::Ordering::Acquire));
