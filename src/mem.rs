@@ -14,6 +14,8 @@ struct HugePageAllocation<T> {
     length: usize,
 }
 
+unsafe impl<T: Send> Send for HugePageAllocation<T> {}
+
 impl<T> Drop for HugePageAllocation<T> {
     fn drop(&mut self) {
         unsafe {
@@ -38,6 +40,9 @@ struct GlobalAllocation<T> {
 }
 
 #[cfg(not(feature = "tests_loom"))]
+unsafe impl<T: Send> Send for GlobalAllocation<T> {}
+
+#[cfg(not(feature = "tests_loom"))]
 impl<T> Drop for GlobalAllocation<T> {
     fn drop(&mut self) {
         unsafe { alloc::dealloc(self.ptr.cast(), self.layout) };
@@ -57,6 +62,9 @@ struct LoomVecAllocation<T> {
     ptr: *mut UnsafeCell<MaybeUninit<T>>,
     capacity: usize,
 }
+
+#[cfg(feature = "tests_loom")]
+unsafe impl<T: Send> Send for LoomVecAllocation<T> {}
 
 #[cfg(feature = "tests_loom")]
 impl<T> Drop for LoomVecAllocation<T> {

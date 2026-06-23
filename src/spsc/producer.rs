@@ -21,7 +21,7 @@ pub struct Producer<T, AllocT: Allocation<T>> {
 // will break the requirement of *Single* producer *Single* consumer queue.
 static_assertions::assert_not_impl_any!(Producer<u32, ()>: Sync);
 
-unsafe impl<T: Send, AllocT: Allocation<T>> Send for Producer<T, AllocT> {}
+unsafe impl<T: Send, AllocT: Allocation<T> + Send> Send for Producer<T, AllocT> {}
 
 impl<T, AllocT: Allocation<T>> Producer<T, AllocT> {
     pub(super) fn new(queue: Arc<Queue<T, AllocT>>) -> Self {
