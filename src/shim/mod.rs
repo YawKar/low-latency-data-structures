@@ -9,6 +9,7 @@ pub mod cell {
     pub use std::cell::*;
 
     #[derive(Debug)]
+    #[repr(transparent)]
     pub struct UnsafeCell<T>(std::cell::UnsafeCell<T>);
 
     impl<T> UnsafeCell<T> {
