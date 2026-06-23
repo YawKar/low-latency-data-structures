@@ -107,8 +107,12 @@ pub fn allocate_buffer<T>(capacity: usize) -> impl Allocation<T> {
         std::mem::align_of::<UnsafeCell<MaybeUninit<T>>>(),
     )
     .unwrap();
+    let ptr = unsafe { alloc::alloc(layout) };
+    if ptr.is_null() {
+        alloc::handle_alloc_error(layout);
+    }
     GlobalAllocation {
-        ptr: unsafe { alloc::alloc(layout) } as *mut UnsafeCell<MaybeUninit<T>>,
+        ptr: ptr.cast(),
         layout,
     }
 }
