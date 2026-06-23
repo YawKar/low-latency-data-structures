@@ -105,6 +105,13 @@ pub fn allocate_buffer<T>(capacity: usize) -> impl Allocation<T> {
     if ptr.is_null() {
         alloc::handle_alloc_error(layout);
     }
+    unsafe {
+        assert_ne!(
+            libc::mlock(ptr.cast(), layout.size()),
+            -1,
+            "mlock global allocation failed"
+        )
+    };
     GlobalAllocation {
         ptr: ptr.cast(),
         layout,
@@ -127,12 +134,23 @@ pub fn allocate_hugepage_buffer<T>(capacity: usize) -> impl Allocation<T> {
             std::ptr::null_mut(),
             alloc_size,
             libc::PROT_READ | libc::PROT_WRITE,
-            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_HUGETLB | libc::MAP_HUGE_2MB,
+            libc::MAP_POPULATE
+                | libc::MAP_PRIVATE
+                | libc::MAP_ANONYMOUS
+                | libc::MAP_HUGETLB
+                | libc::MAP_HUGE_2MB,
             -1,
             0,
         )
     };
     assert_ne!(ptr, libc::MAP_FAILED, "hugepage mmap failed");
+    unsafe {
+        assert_ne!(
+            libc::mlock(ptr.cast(), alloc_size),
+            -1,
+            "mlock hugepage allocation failed"
+        )
+    };
     HugePageAllocation {
         ptr: ptr as *mut UnsafeCell<MaybeUninit<T>>,
         length: alloc_size,
