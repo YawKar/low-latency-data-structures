@@ -221,11 +221,6 @@ view-bench-report:
     xdg-open ./target/criterion/report/index.html
 
 [group("Benches")]
-bench-throughput:
+bench-spsc:
     # TODO: requires some meta-selection to find cpu cores that share L cache
-    taskset -c 0,1 cargo bench --no-default-features --bench spsc_throughput 
-
-[group("Benches")]
-bench-latency:
-    # TODO: requires some meta-selection to find cpu cores that share L cache
-    taskset -c 0,1 cargo bench --no-default-features --bench spsc_latency 
+    taskset -c 0,1 cargo bench --no-default-features --bench spsc
