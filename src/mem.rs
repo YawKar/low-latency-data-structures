@@ -19,9 +19,11 @@ unsafe impl<T: Send> Send for HugePageAllocation<T> {}
 impl<T> Drop for HugePageAllocation<T> {
     fn drop(&mut self) {
         unsafe {
-            if libc::munmap(self.ptr.cast(), self.length) == -1 {
-                // TODO: should we panic here or emit an event?
-            }
+            assert_ne!(
+                libc::munmap(self.ptr.cast(), self.length),
+                -1,
+                "failed to munmap hugepage allocation"
+            );
         };
     }
 }
@@ -98,15 +100,7 @@ pub fn allocate_buffer<T>(capacity: usize) -> impl Allocation<T> {
 /// Allocate a typed buffer with `capacity` uninitialized items each with memory layout of `T`.
 #[cfg(not(feature = "tests_loom"))]
 pub fn allocate_buffer<T>(capacity: usize) -> impl Allocation<T> {
-    let layout_size = alloc::Layout::array::<UnsafeCell<MaybeUninit<T>>>(capacity)
-        .unwrap()
-        .size();
-
-    let layout = alloc::Layout::from_size_align(
-        layout_size,
-        std::mem::align_of::<UnsafeCell<MaybeUninit<T>>>(),
-    )
-    .unwrap();
+    let layout = alloc::Layout::array::<UnsafeCell<MaybeUninit<T>>>(capacity).unwrap();
     let ptr = unsafe { alloc::alloc(layout) };
     if ptr.is_null() {
         alloc::handle_alloc_error(layout);

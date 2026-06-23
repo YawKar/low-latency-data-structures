@@ -189,7 +189,12 @@ perf-pinned cores bin *args: (build-bin "release" bin)
 
 # Run all test groups
 [group("Tests")]
-test-all: test-basic test-loom test-dhat
+test-all: test-e2e-smoke test-basic test-loom test-dhat
+
+# Run e2e smoke test
+[group("Tests")]
+test-e2e-smoke:
+    @cargo run --release --bin smoke
 
 # Run basic tests
 [group("Tests")]
