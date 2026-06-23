@@ -4,34 +4,6 @@ use criterion::{Criterion, criterion_group, criterion_main};
 use duplicate::duplicate;
 use low_latency_data_structures::spsc;
 
-fn bench_throughput(c: &mut Criterion) {
-    let mut group = c.benchmark_group("spsc_throughput");
-    duplicate! {
-        [
-            CAPACITY;
-            [64];
-            [1024];
-            [65536];
-        ]
-        {
-            group.throughput(criterion::Throughput::Elements(CAPACITY));
-            let capacity_label = CAPACITY;
-            group.bench_function(format!("capacity_{capacity_label}"), |b| {
-                let (producer, consumer) = spsc::new::<u64, CAPACITY>();
-                b.iter(|| {
-                    for i in 0..CAPACITY as u64 {
-                        let _ = black_box(producer.push(black_box(i)));
-                    }
-                    for _ in 0..CAPACITY {
-                        let _ = black_box(consumer.pop());
-                    }
-                });
-            });
-        }
-    };
-    group.finish();
-}
-
 fn bench_cross_thread_throughput(c: &mut Criterion) {
     let core_ids = core_affinity::get_core_ids().unwrap();
     // They should share L3 cache
@@ -116,7 +88,6 @@ fn bench_ping_pong_single_thread(c: &mut Criterion) {
 criterion_group!(
     benches,
     bench_ping_pong_single_thread,
-    bench_throughput,
     bench_cross_thread_throughput
 );
 criterion_main!(benches);
