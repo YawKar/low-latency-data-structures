@@ -17,10 +17,6 @@ pub struct Producer<T, AllocT: Allocation<T>> {
     _not_sync: PhantomData<*const ()>,
 }
 
-// Shouldn't be possible to construct Arc<Producer<T>> and then use it from different threads as it
-// will break the requirement of *Single* producer *Single* consumer queue.
-static_assertions::assert_not_impl_any!(Producer<u32, ()>: Sync);
-
 unsafe impl<T: Send, AllocT: Allocation<T> + Send> Send for Producer<T, AllocT> {}
 
 impl<T, AllocT: Allocation<T>> Producer<T, AllocT> {
@@ -35,4 +31,22 @@ impl<T, AllocT: Allocation<T>> Producer<T, AllocT> {
     pub fn push(&self, item: T) -> Option<T> {
         self.inner.push(item)
     }
+}
+
+#[cfg(test)]
+mod tests {
+
+    use super::*;
+    use crate::shim::cell::UnsafeCell;
+
+    struct NeverAlloc;
+    impl<T> Allocation<T> for NeverAlloc {
+        fn ptr(&self) -> *mut UnsafeCell<std::mem::MaybeUninit<T>> {
+            unreachable!("it's just a stub")
+        }
+    }
+
+    // Shouldn't be possible to construct Arc<Producer<T>> and then use it from different threads as it
+    // will break the requirement of *Single* producer *Single* consumer queue.
+    static_assertions::assert_not_impl_any!(Producer<u32, NeverAlloc>: Sync);
 }
