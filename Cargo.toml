@@ -31,10 +31,5 @@ criterion = { version = "0.8.2", features = ["html_reports"] }
 hdrhistogram = "7.5.4"
 
 [[bench]]
-name = "spsc_throughput"
+name = "spsc"
 harness = false
-
-[[bench]]
-name = "spsc_latency"
-harness = false
-

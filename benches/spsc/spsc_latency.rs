@@ -5,7 +5,7 @@ use hdrhistogram::Histogram;
 use low_latency_data_structures::spsc;
 use quanta::Clock;
 
-fn main() {
+pub(super) fn benches() {
     let clock = Arc::new(quanta::Clock::new());
     const CAPACITY: usize = 65536;
     let iterations: u64 = 1_000_000_000;

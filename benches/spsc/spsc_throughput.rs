@@ -1,8 +1,14 @@
 use std::hint::black_box;
 
-use criterion::{Criterion, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group};
 use duplicate::duplicate;
 use low_latency_data_structures::spsc;
+
+criterion_group!(
+    benches,
+    bench_ping_pong_single_thread,
+    bench_cross_thread_throughput
+);
 
 fn bench_cross_thread_throughput(c: &mut Criterion) {
     let core_ids = core_affinity::get_core_ids().unwrap();
@@ -84,10 +90,3 @@ fn bench_ping_pong_single_thread(c: &mut Criterion) {
         }
     }
 }
-
-criterion_group!(
-    benches,
-    bench_ping_pong_single_thread,
-    bench_cross_thread_throughput
-);
-criterion_main!(benches);
