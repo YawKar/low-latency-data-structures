@@ -229,6 +229,7 @@ setup-cores cores:
         echo performance | sudo tee /sys/devices/system/cpu/cpu$i/cpufreq/scaling_governor; \
         set +x; \
     done
+    echo 1 | sudo tee /sys/devices/system/cpu/intel_pstate/no_turbo
 
 # Un-setup these cores for benchmarking. just unsetup-cores 7,8
 [group("Benches")]
@@ -239,6 +240,7 @@ unsetup-cores cores:
         echo powersave | sudo tee /sys/devices/system/cpu/cpu$i/cpufreq/scaling_governor; \
         set +x; \
     done
+    echo 0 | sudo tee /sys/devices/system/cpu/intel_pstate/no_turbo
 
 # Benches only very tiny single-threaded deterministic flow
 [group("Benches")]
