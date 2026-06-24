@@ -36,6 +36,6 @@ harness = false
 
 [[example]]
 name = "spsc_bench_handoff"
-path = "examples/spsc/bench_handoff.rs"
+path = "examples/spsc/bench_handoff_under_coherency_contention.rs"
 harness = false
 

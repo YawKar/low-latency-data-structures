@@ -1,4 +1,4 @@
-//! Direct one-way handoff latency: producer pushes rdtscp timestamp, consumer
+//! Direct one-way handoff latency under coherency contention: producer pushes rdtscp timestamp, consumer
 //! pops and records `now - ts`. Relies on invariant_tsc + nonstop_tsc being
 //! synchronized across cores on the same socket (preflight checks this).
 //!
