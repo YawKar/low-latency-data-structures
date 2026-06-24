@@ -39,3 +39,8 @@ name = "spsc_bench_handoff"
 path = "examples/spsc/bench_handoff_under_coherency_contention.rs"
 harness = false
 
+[[example]]
+name = "spsc_bench_throttled"
+path = "examples/spsc/bench_throttled.rs"
+harness = false
+

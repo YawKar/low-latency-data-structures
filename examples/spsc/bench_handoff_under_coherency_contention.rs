@@ -28,202 +28,23 @@ use std::sync::{Arc, Barrier};
 use std::thread;
 
 use hdrhistogram::Histogram;
+use low_latency_data_structures::bench::tsc::rdtscp;
+use low_latency_data_structures::bench::{loc, preflight};
 use low_latency_data_structures::spsc::new;
 
-/// Inline rdtscp. Returns the TSC value with partial serialization (prevents
-/// the CPU from speculatively moving the read across surrounding ops).
-#[inline(always)]
-fn tsc() -> u64 {
-    let mut aux = 0u32;
-    unsafe { core::arch::x86_64::__rdtscp(&mut aux) }
-}
-
-/// Read LOC (local timer interrupt) counter from /proc/interrupts for each
-/// requested cpu. Returns `None` for any cpu not found (e.g. offlined).
-///
-/// /proc/interrupts columns are positional and only include online CPUs, so we
-/// must parse the header to map CPU ids to column indices.
-fn read_loc_counters(cpus: &[usize]) -> Vec<Option<u64>> {
-    let contents = match std::fs::read_to_string("/proc/interrupts") {
-        Ok(s) => s,
-        Err(_) => return vec![None; cpus.len()],
-    };
-    let mut lines = contents.lines();
-    let header = match lines.next() {
-        Some(h) => h,
-        None => return vec![None; cpus.len()],
-    };
-    let columns: Vec<usize> = header
-        .split_whitespace()
-        .filter_map(|tok| tok.strip_prefix("CPU").and_then(|n| n.parse().ok()))
-        .collect();
-
-    let loc_line = lines.find(|l| l.trim_start().starts_with("LOC:"));
-    let counts: Vec<u64> = match loc_line {
-        Some(l) => l
-            .trim_start()
-            .trim_start_matches("LOC:")
-            .split_whitespace()
-            .filter_map(|t| t.parse().ok())
-            .collect(),
-        None => return vec![None; cpus.len()],
-    };
-
-    cpus.iter()
-        .map(|&cpu| {
-            let col = columns.iter().position(|&c| c == cpu)?;
-            counts.get(col).copied()
-        })
-        .collect()
-}
-
 fn preflight(used_cores: &[usize]) {
-    let mut failures = vec![];
-    let mut warnings = vec![];
-
-    fn read(path: &str) -> Option<String> {
-        std::fs::read_to_string(path)
-            .ok()
-            .map(|s| s.trim().to_string())
-    }
-    /// "2-3,5,7-9" -> [2,3,5,7,8,9]
-    fn parse_cpu_list(s: &str) -> Vec<usize> {
-        let mut out = vec![];
-        for part in s.split(',').filter(|p| !p.is_empty()) {
-            if let Some((a, b)) = part.split_once('-') {
-                let (a, b): (usize, usize) = (a.parse().unwrap(), b.parse().unwrap());
-                out.extend(a..=b);
-            } else if let Ok(n) = part.parse::<usize>() {
-                out.push(n);
-            }
-        }
-        out
-    }
-    if cfg!(debug_assertions) {
-        failures.push("debug build, build with `--release` instead".to_string());
-    }
-
-    let online = read("/sys/devices/system/cpu/online")
-        .map(|s| parse_cpu_list(&s))
-        .unwrap_or_default();
-    for &c in used_cores {
-        if !online.contains(&c) {
-            failures.push(format!("core {c} is offline"));
-        }
-    }
-
-    let isolated = read("/sys/devices/system/cpu/isolated")
-        .map(|s| parse_cpu_list(&s))
-        .unwrap_or_default();
-    for &c in used_cores {
-        if !isolated.contains(&c) {
-            warnings.push(format!("core {c} not in isolcpus (got {isolated:?})"));
-        }
-    }
-
-    let nohz = read("/sys/devices/system/cpu/nohz_full")
-        .map(|s| parse_cpu_list(&s))
-        .unwrap_or_default();
-    for &c in used_cores {
-        if !nohz.contains(&c) {
-            warnings.push(format!("core {c} not in nohz_full"));
-        }
-    }
-
-    for &c in used_cores {
-        let g = read(&format!(
-            "/sys/devices/system/cpu/cpu{c}/cpufreq/scaling_governor"
-        ));
-        match g.as_deref() {
-            Some("performance") => {}
-            Some(other) => warnings.push(format!("core {c} governor = {other}, want performance")),
-            None => warnings.push(format!("core {c} governor unreadable")),
-        }
-    }
-
-    match read("/sys/devices/system/cpu/intel_pstate/no_turbo") {
-        Some(s) if s == "1" => {}
-        Some(other) => warnings.push(format!("intel_pstate/no_turbo = {other}, want 1")),
-        None => match read("/sys/devices/system/cpu/cpufreq/boost") {
-            Some(s) if s == "0" => {}
-            Some(other) => warnings.push(format!("cpufreq/boost = {other}, want 0")),
-            None => {
-                warnings.push("turbo state unreadable (neither Intel pstate nor AMD boost)".into())
-            }
-        },
-    }
-
-    if used_cores.len() >= 2 {
-        let core_id = |c: usize| read(&format!("/sys/devices/system/cpu/cpu{c}/topology/core_id"));
-        let a = core_id(used_cores[0]);
-        let b = core_id(used_cores[1]);
-        if a.is_some() && a == b {
-            failures.push(format!(
-                "used_cores {} and {} are SMT siblings of physical core {}",
-                used_cores[0],
-                used_cores[1],
-                a.unwrap()
-            ));
-        }
-    }
-
-    fn siblings_of(c: usize) -> Vec<usize> {
-        read(&format!(
-            "/sys/devices/system/cpu/cpu{c}/topology/thread_siblings_list"
-        ))
-        .map(|s| parse_cpu_list(&s))
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|&s| s != c)
-        .collect()
-    }
-    for &c in used_cores {
-        for sib in siblings_of(c) {
-            let sib_online =
-                read(&format!("/sys/devices/system/cpu/cpu{sib}/online")).as_deref() != Some("0");
-            let sib_isolated = isolated.contains(&sib);
-            if sib_online && !sib_isolated {
-                warnings.push(format!(
-                  "SMT sibling of {c} is cpu {sib}, online and not isolated will steal execution units"
-              ));
-            }
-        }
-    }
-
-    if used_cores.len() >= 2 {
-        let l3 = |c: usize| {
-            read(&format!(
-                "/sys/devices/system/cpu/cpu{c}/cache/index3/shared_cpu_list"
-            ))
-        };
-        if let (Some(a), Some(b)) = (l3(used_cores[0]), l3(used_cores[1])) {
-            if a != b {
-                warnings.push(format!(
-                    "used_cores {} and {} don't share L3 ({a} vs {b})",
-                    used_cores[0], used_cores[1]
-                ));
-            }
-        }
-    }
-
-    // TSC quality
-    if let Some(cpuinfo) = read("/proc/cpuinfo") {
-        for flag in ["constant_tsc", "nonstop_tsc"] {
-            if !cpuinfo.contains(flag) {
-                failures.push(format!("CPU missing `{flag}`; TSC unsuitable"));
-            }
-        }
-    }
-
-    for warn in warnings {
-        eprintln!("WARNING: {warn}");
-    }
-    if !failures.is_empty() {
-        for fail in failures {
-            eprintln!("FAILURE: {fail}");
-        }
-        panic!("preflight failed: results would be meaningless");
-    }
+    let mut r = preflight::PreflightReport::default();
+    preflight::release_build(&mut r);
+    preflight::cores_online(&mut r, used_cores);
+    preflight::cores_isolated(&mut r, used_cores);
+    preflight::cores_nohz_full(&mut r, used_cores);
+    preflight::cores_performance_governor(&mut r, used_cores);
+    preflight::turbo_disabled(&mut r);
+    preflight::cores_distinct_physical(&mut r, used_cores);
+    preflight::cores_smt_siblings_quiet(&mut r, used_cores);
+    preflight::cores_share_l3(&mut r, used_cores);
+    preflight::tsc_invariant_and_nonstop(&mut r);
+    r.finish();
 }
 
 fn main() {
@@ -253,7 +74,7 @@ fn main() {
     let done = Arc::new(AtomicBool::new(false));
     let clock = quanta::Clock::new();
 
-    let loc_before = read_loc_counters(&used_cpu_ids);
+    let loc_before = loc::read(&used_cpu_ids);
 
     let cthread = {
         let barrier = barrier.clone();
@@ -274,7 +95,7 @@ fn main() {
             barrier.wait();
             loop {
                 while let Some(ts) = consumer.pop() {
-                    let now = tsc();
+                    let now = rdtscp();
                     if seen >= WARMUP {
                         // wrapping_sub guards against rare cross-core TSC skew;
                         // record() will reject zero/wraparound silently via ok().
@@ -286,7 +107,7 @@ fn main() {
                     // Producer's `done` Release happens-after its last push, so
                     // any items still in the queue are visible now. Drain.
                     while let Some(ts) = consumer.pop() {
-                        let now = tsc();
+                        let now = rdtscp();
                         if seen >= WARMUP {
                             let _ = hist.record(now.wrapping_sub(ts));
                         }
@@ -320,7 +141,7 @@ fn main() {
                 // reflects the moment the slot was actually published, not the
                 // moment we first noticed the queue was full.
                 loop {
-                    let ts = tsc();
+                    let ts = rdtscp();
                     if producer.push(ts).is_none() {
                         break;
                     }
@@ -334,7 +155,7 @@ fn main() {
     barrier.wait();
     pthread.join().unwrap();
     let hist = cthread.join().unwrap();
-    let loc_after = read_loc_counters(&used_cpu_ids);
+    let loc_after = loc::read(&used_cpu_ids);
 
     let report = |label: &str, raw: u64| {
         let ns = clock.delta_as_nanos(0, raw);

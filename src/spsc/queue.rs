@@ -281,7 +281,7 @@ mod tests_basic {
         let (producer, _) = new::<i32, 2>();
         assert_eq!(producer.push(1), None);
         assert_eq!(producer.push(2), None);
-        // Full — item comes back untouched
+        // Full: item comes back untouched
         assert_eq!(producer.push(3), Some(3));
         assert_eq!(producer.push(4), Some(4));
     }
@@ -322,7 +322,7 @@ mod tests_basic {
     #[test]
     fn interleaved_push_pop() {
         let (producer, consumer) = new::<_, 2>();
-        // Push 1, pop 1, repeat — tests wraparound with tiny queue
+        // Push 1, pop 1, repeat: tests wraparound with tiny queue
         for i in 0..1000 {
             assert_eq!(producer.push(i), None);
             assert_eq!(consumer.pop(), Some(i));
