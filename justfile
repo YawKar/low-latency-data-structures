@@ -103,7 +103,7 @@ perf-dtlb bin *args: (build-bin "release" bin)
         dtlb_load_misses.walk_completed,\
         dtlb_load_misses.walk_active \
         -- ./target/release/{{ bin }} {{ args }}
-# iTLB (instruction TLB — useful if code footprint is large)
+# iTLB (instruction TLB: useful if code footprint is large)
 [group("Debug & Profiling")]
 perf-itlb bin *args: (build-bin "release" bin)
     perf stat -e \
@@ -267,3 +267,10 @@ bench-spsc-micro:
 [group("Benches")]
 bench-spsc-full cores:
     sudo bash -c "ulimit -l 32000 && cargo build --release --example spsc_bench_handoff && taskset -c {{ cores }} cargo run --release --example spsc_bench_handoff"
+
+# Throttled-producer offered-load sweep with coordinated-omission correction.
+# Pass env through sudo: `BENCH_DEBUG=1 just bench-spsc-throttled 7,8` works
+# because justfile recipes inherit env, then `sudo -E` forwards it.
+[group("Benches")]
+bench-spsc-throttled cores:
+    sudo -E bash -c "ulimit -l 32000 && cargo build --release --example spsc_bench_throttled && taskset -c {{ cores }} cargo run --release --example spsc_bench_throttled"
