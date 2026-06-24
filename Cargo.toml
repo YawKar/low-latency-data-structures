@@ -44,3 +44,8 @@ name = "spsc_bench_throttled"
 path = "examples/spsc/bench_throttled.rs"
 harness = false
 
+[[example]]
+name = "spsc_bench_drain"
+path = "examples/spsc/bench_drain.rs"
+harness = false
+

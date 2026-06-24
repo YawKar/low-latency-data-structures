@@ -17,7 +17,7 @@ init:
     cargo check --features tests_basic
 [group("Bootstrap")]
 enable-hugepages:
-    sudo sysctl -w vm.nr_hugepages=16
+    sudo sysctl -w vm.nr_hugepages=64
 [group("Bootstrap")]
 disable-hugepages:
     sudo sysctl -w vm.nr_hugepages=0
@@ -274,3 +274,9 @@ bench-spsc-full cores:
 [group("Benches")]
 bench-spsc-throttled cores:
     sudo -E bash -c "ulimit -l 32000 && cargo build --release --example spsc_bench_throttled && taskset -c {{ cores }} cargo run --release --example spsc_bench_throttled"
+
+# Cold-cache single-thread drain sweep. Compares regular vs hugepage allocator
+# across capacities to surface dTLB / cache effects. Needs hugepages enabled.
+[group("Benches")]
+bench-spsc-drain core:
+    sudo -E bash -c "ulimit -l unlimited && cargo build --release --example spsc_bench_drain && taskset -c {{ core }} cargo run --release --example spsc_bench_drain"
