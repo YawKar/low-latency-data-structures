@@ -217,6 +217,28 @@ pub fn cores_share_l3(r: &mut PreflightReport, cores: &[usize]) {
     }
 }
 
+/// Fail if fewer than `min` 2 MiB hugepages are free. Drain-style benches
+/// allocate up-front and need the kernel pool already populated; falling
+/// back to base pages silently would defeat the comparison point.
+pub fn hugepages_at_least(r: &mut PreflightReport, min: u64) {
+    let Some(meminfo) = std::fs::read_to_string("/proc/meminfo").ok() else {
+        r.warn("/proc/meminfo unreadable, cannot verify hugepage availability");
+        return;
+    };
+    let free = meminfo
+        .lines()
+        .find_map(|l| l.strip_prefix("HugePages_Free:"))
+        .and_then(|s| s.split_whitespace().next())
+        .and_then(|s| s.parse::<u64>().ok());
+    match free {
+        Some(n) if n >= min => {}
+        Some(n) => r.fail(format!(
+            "need >= {min} free 2MiB hugepages, have {n} (try `just enable-hugepages`)"
+        )),
+        None => r.warn("could not parse HugePages_Free from /proc/meminfo"),
+    }
+}
+
 /// Fail if the CPU lacks `constant_tsc` and `nonstop_tsc`. Without both, the
 /// TSC ticks at variable rate (P-state dependent) or pauses during deep
 /// C-states, making any TSC-based latency measurement garbage.
