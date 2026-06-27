@@ -198,10 +198,10 @@ test-e2e-smoke:
 
 # Run basic tests
 [group("Tests")]
-test-basic:
-    @cargo test --no-default-features --features tests_basic
+test-basic *ARGS:
+    @cargo test --no-default-features --features tests_basic {{ ARGS }}
     @if [[ $(sysctl --values vm.nr_hugepages) != "0" ]]; then \
-        cargo test --no-default-features --features tests_basic,tests_hugepage; \
+        cargo test --no-default-features --features tests_basic,tests_hugepage {{ ARGS }}; \
     else \
         echo "{{ style("warning") }}[WARN]{{ NORMAL }} Your system doesn't have hugepages to run tests_hugepage"; \
     fi
