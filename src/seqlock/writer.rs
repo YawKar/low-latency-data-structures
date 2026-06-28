@@ -5,6 +5,7 @@ use crate::seqlock::lock::SeqLock;
 
 pub struct Writer<T: bytemuck::AnyBitPattern> {
     inner: Arc<SeqLock<T>>,
+    // Remove possibility to share ownership
     _not_sync: PhantomData<*const ()>,
 }
 

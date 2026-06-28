@@ -22,8 +22,7 @@ pub(super) struct SeqLock<T: bytemuck::AnyBitPattern> {
     data: UnsafeCell<T>,
 }
 
-// SAFETY: there will only be 1 writer at any time, thus it's safe to call write() and utilize
-// access through Arc<SeqLock<T>> in Writer.
+// SAFETY: UnsafeCell is not Sync but we synchronize access through the write()/read() methods. Plus the whole thing utilizes UB that inevitably leads to data races on the `data` but in a controlled manner.
 unsafe impl<T: bytemuck::AnyBitPattern> Sync for SeqLock<T> {}
 
 impl<T: bytemuck::AnyBitPattern> SeqLock<T> {
