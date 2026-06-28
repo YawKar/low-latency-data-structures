@@ -1,4 +1,4 @@
-use std::cell::Cell;
+use std::cell::UnsafeCell;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering, fence};
 
@@ -8,7 +8,7 @@ use crate::seqlock::writer::Writer;
 pub fn new<T: Copy>(initial_value: T) -> (Writer<T>, Reader<T>) {
     let sl = Arc::new(SeqLock {
         seq: AtomicU64::new(0),
-        data: Cell::new(initial_value),
+        data: UnsafeCell::new(initial_value),
     });
     let writer = Writer::new(sl.clone());
     let reader = Reader::new(sl);
@@ -18,7 +18,7 @@ pub fn new<T: Copy>(initial_value: T) -> (Writer<T>, Reader<T>) {
 #[repr(C, align(128))]
 pub(super) struct SeqLock<T: Copy> {
     seq: AtomicU64,
-    data: Cell<T>,
+    data: UnsafeCell<T>,
 }
 
 // SAFETY: there will only be 1 writer at any time, thus it's safe to call write() and utilize
@@ -34,7 +34,7 @@ impl<T: Copy> SeqLock<T> {
         fence(Ordering::Release);
         // SAFETY: SeqLock utilizes UB and volatile here adds guarantees that neither compiler, nor
         // processor will try to reorder things
-        unsafe { self.data.as_ptr().write_volatile(value) };
+        unsafe { self.data.get().write_volatile(value) };
         self.seq.store(s.wrapping_add(2), Ordering::Release);
     }
 
@@ -46,7 +46,7 @@ impl<T: Copy> SeqLock<T> {
                 continue;
             }
             // SAFETY: look at SAFETY commentary in write method
-            let read_attempt = unsafe { self.data.as_ptr().read_volatile() };
+            let read_attempt = unsafe { self.data.get().read_volatile() };
             // ARM: prevents the read from reordering below the s2 load
             fence(Ordering::Acquire);
             let s2 = self.seq.load(Ordering::Relaxed);
