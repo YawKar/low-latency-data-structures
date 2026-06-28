@@ -22,7 +22,10 @@ pub(super) struct SeqLock<T: bytemuck::AnyBitPattern> {
     data: UnsafeCell<T>,
 }
 
-// SAFETY: UnsafeCell is not Sync but we synchronize access through the write()/read() methods. Plus the whole thing utilizes UB that inevitably leads to data races on the `data` but in a controlled manner.
+// SAFETY: UB1: UnsafeCell is not Sync but we synchronize access through the write()/read() methods.
+// UB2: Torn reads of `data` are racy and undefined by the abstract model, but `T: AnyBitPattern`
+// guarantees every bit pattern is a valid T, so the materialized value is at worst stale,
+// never UB. Stale values are then rejected by the seq check before they propagate.
 unsafe impl<T: bytemuck::AnyBitPattern> Sync for SeqLock<T> {}
 
 impl<T: bytemuck::AnyBitPattern> SeqLock<T> {
