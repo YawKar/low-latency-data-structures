@@ -154,6 +154,9 @@ fn main() {
     report("p99", hist.value_at_quantile(0.99));
     report("p99.9", hist.value_at_quantile(0.999));
     report("max", hist.max());
+    if hist.max() > 10 * hist.value_at_quantile(0.999) {
+        println!("  (max likely contaminated by a LOC tick; see LOC delta below)");
+    }
 
     println!();
     println!("  Local timer interrupts during run (per cpu, nohz_full should keep these near 0):");
