@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicU64, Ordering, fence};
 use crate::seqlock::reader::Reader;
 use crate::seqlock::writer::Writer;
 
-pub fn new<T: Copy>(initial_value: T) -> (Writer<T>, Reader<T>) {
+pub fn new<T: bytemuck::AnyBitPattern>(initial_value: T) -> (Writer<T>, Reader<T>) {
     let sl = Arc::new(SeqLock {
         seq: AtomicU64::new(0),
         data: UnsafeCell::new(initial_value),
@@ -17,16 +17,16 @@ pub fn new<T: Copy>(initial_value: T) -> (Writer<T>, Reader<T>) {
 
 /// 128 = adjacent-line prefetcher granularity, not cache line size
 #[repr(C, align(128))]
-pub(super) struct SeqLock<T: Copy> {
+pub(super) struct SeqLock<T: bytemuck::AnyBitPattern> {
     seq: AtomicU64,
     data: UnsafeCell<T>,
 }
 
 // SAFETY: there will only be 1 writer at any time, thus it's safe to call write() and utilize
 // access through Arc<SeqLock<T>> in Writer.
-unsafe impl<T: Copy> Sync for SeqLock<T> {}
+unsafe impl<T: bytemuck::AnyBitPattern> Sync for SeqLock<T> {}
 
-impl<T: Copy> SeqLock<T> {
+impl<T: bytemuck::AnyBitPattern> SeqLock<T> {
     #[inline]
     pub(super) fn write(&self, value: T) {
         let s = self.seq.load(Ordering::Relaxed);
