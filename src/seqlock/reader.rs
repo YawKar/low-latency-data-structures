@@ -22,6 +22,7 @@ mod tests {
     use super::*;
 
     // There may be multiple readers as they only read and don't mutate anything.
+    // In case someone remove unsafe impl on SeqLock
     static_assertions::assert_impl_all!(Reader<u32>: Send, Sync);
     static_assertions::assert_impl_all!(Arc<Reader<u32>>: Send, Clone);
 }

@@ -15,6 +15,7 @@ pub fn new<T: Copy>(initial_value: T) -> (Writer<T>, Reader<T>) {
     (writer, reader)
 }
 
+/// 128 = adjacent-line prefetcher granularity, not cache line size
 #[repr(C, align(128))]
 pub(super) struct SeqLock<T: Copy> {
     seq: AtomicU64,
@@ -102,12 +103,11 @@ mod tests {
             })
         };
         let readers_hs: Vec<_> = (0..READERS)
-            .into_iter()
             .map(|_| {
                 let barrier = barrier.clone();
                 let reader = reader.clone();
                 thread::spawn(move || {
-                    let mut collected: Vec<u64> = vec![];
+                    let mut collected: Vec<u64> = Vec::with_capacity(VALUES.len() + 1);
                     loop {
                         if collected.len() == VALUES.len() + 1 {
                             break;
