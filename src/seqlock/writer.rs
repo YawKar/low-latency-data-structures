@@ -3,15 +3,15 @@ use std::sync::Arc;
 
 use crate::seqlock::lock::SeqLock;
 
-pub struct Writer<T: Copy> {
+pub struct Writer<T: bytemuck::AnyBitPattern> {
     inner: Arc<SeqLock<T>>,
     _not_sync: PhantomData<*const ()>,
 }
 
 // SAFETY: SeqLock<T> is Send, we just need to forbid Sync.
-unsafe impl<T: Copy> Send for Writer<T> {}
+unsafe impl<T: bytemuck::AnyBitPattern> Send for Writer<T> {}
 
-impl<T: Copy> Writer<T> {
+impl<T: bytemuck::AnyBitPattern> Writer<T> {
     pub(super) fn new(seqlock: Arc<SeqLock<T>>) -> Self {
         Self {
             inner: seqlock,

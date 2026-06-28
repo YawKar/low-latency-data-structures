@@ -2,11 +2,11 @@ use std::sync::Arc;
 
 use crate::seqlock::lock::SeqLock;
 
-pub struct Reader<T: Copy> {
+pub struct Reader<T: bytemuck::AnyBitPattern> {
     inner: Arc<SeqLock<T>>,
 }
 
-impl<T: Copy> Reader<T> {
+impl<T: bytemuck::AnyBitPattern> Reader<T> {
     pub(super) fn new(seqlock: Arc<SeqLock<T>>) -> Self {
         Self { inner: seqlock }
     }
