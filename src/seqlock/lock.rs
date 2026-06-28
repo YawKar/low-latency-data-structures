@@ -26,6 +26,7 @@ pub(super) struct SeqLock<T: Copy> {
 unsafe impl<T: Copy> Sync for SeqLock<T> {}
 
 impl<T: Copy> SeqLock<T> {
+    #[inline]
     pub(super) fn write(&self, value: T) {
         self.seq.fetch_add(1, Ordering::Release);
         // SAFETY: SeqLock utilizes UB and volatile here adds guarantees that neither compiler, nor
@@ -34,6 +35,7 @@ impl<T: Copy> SeqLock<T> {
         self.seq.fetch_add(1, Ordering::Release);
     }
 
+    #[inline]
     pub(super) fn read(&self) -> T {
         loop {
             let s1 = self.seq.load(Ordering::Acquire);
