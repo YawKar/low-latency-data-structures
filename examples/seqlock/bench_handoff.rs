@@ -65,7 +65,7 @@ fn main() {
     }
 
     const N: u64 = 2_000_000;
-    const WARMUP: u64 = 1_000_000;
+    const WARMUP: u64 = 100_000;
     const INIT_VALUE: u64 = 0;
 
     let (writer, reader) = new(INIT_VALUE);
