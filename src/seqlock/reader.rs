@@ -11,6 +11,7 @@ impl<T: Copy> Reader<T> {
         Self { inner: seqlock }
     }
 
+    #[inline]
     pub fn read(&self) -> T {
         self.inner.read()
     }

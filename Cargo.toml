@@ -30,6 +30,7 @@ duplicate = "2.0.1"
 criterion = { version = "0.8.2", features = ["html_reports"] }
 hdrhistogram = "7.5.4"
 
+# SPSC benches
 [[bench]]
 name = "spsc"
 harness = false
@@ -49,3 +50,12 @@ name = "spsc_bench_drain"
 path = "examples/spsc/bench_drain.rs"
 harness = false
 
+# SeqLock benches
+[[bench]]
+name = "seqlock"
+harness = false
+
+[[example]]
+name = "seqlock_bench_handoff"
+path = "examples/seqlock/bench_handoff.rs"
+harness = false

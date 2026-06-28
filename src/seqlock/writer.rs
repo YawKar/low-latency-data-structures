@@ -19,6 +19,7 @@ impl<T: Copy> Writer<T> {
         }
     }
 
+    #[inline]
     pub fn write(&self, value: T) {
         self.inner.write(value)
     }

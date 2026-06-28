@@ -13,8 +13,8 @@ init:
     cargo install cargo-run-bin
     cargo bin -i
     cargo install cargo-show-asm
-    cargo check --features tests_loom
-    cargo check --features tests_basic
+    cargo check --all-targets --features tests_loom
+    cargo check --all-targets --features tests_basic
 [group("Bootstrap")]
 enable-hugepages:
     sudo sysctl -w vm.nr_hugepages=64
@@ -42,7 +42,7 @@ lint fix="":
     # nix
     statix {{ if fix != "" { "fix" } else { "check" } }}
     # rust
-    cargo check
+    {{ if fix == "" { "cargo check --all-targets" } else { "echo cargo check skipped..." } }}
     cargo clippy {{ if fix != "" { "--fix --allow-dirty" } else { "" } }}
 [group("Code Style")]
 lint-fix: (lint "fix")
@@ -259,24 +259,34 @@ unsetup-cores cores:
     echo 0 | sudo tee /sys/devices/system/cpu/intel_pstate/no_turbo
 
 # Benches only very tiny single-threaded deterministic flow
-[group("Benches")]
+[group("Benches: SPSC")]
 bench-spsc-micro:
     cargo bench --no-default-features --bench spsc
 
-# Full bench. Requires additional setup for isolated cpu and etc.
-[group("Benches")]
-bench-spsc-full cores:
+# Handoff benchmark. Measures latency from the push to the pop of the item.
+[group("Benches: SPSC")]
+bench-spsc-handoff cores:
     sudo bash -c "ulimit -l 32000 && cargo build --release --example spsc_bench_handoff && taskset -c {{ cores }} cargo run --release --example spsc_bench_handoff"
 
 # Throttled-producer offered-load sweep with coordinated-omission correction.
 # Pass env through sudo: `BENCH_DEBUG=1 just bench-spsc-throttled 7,8` works
 # because justfile recipes inherit env, then `sudo -E` forwards it.
-[group("Benches")]
+[group("Benches: SPSC")]
 bench-spsc-throttled cores:
     sudo -E bash -c "ulimit -l 32000 && cargo build --release --example spsc_bench_throttled && taskset -c {{ cores }} cargo run --release --example spsc_bench_throttled"
 
 # Cold-cache single-thread drain sweep. Compares regular vs hugepage allocator
 # across capacities to surface dTLB / cache effects. Needs hugepages enabled.
-[group("Benches")]
+[group("Benches: SPSC")]
 bench-spsc-drain core:
     sudo -E bash -c "ulimit -l unlimited && cargo build --release --example spsc_bench_drain && taskset -c {{ core }} cargo run --release --example spsc_bench_drain"
+
+# Benches only very tiny single-threaded deterministic flow
+[group("Benches: SeqLock")]
+bench-seqlock-micro:
+    cargo bench --no-default-features --bench seqlock
+
+# Handoff benchmark. Measures latency from the write to the read of the item.
+[group("Benches: SeqLock")]
+bench-seqlock-handoff cores:
+    sudo bash -c "ulimit -l 32000 && cargo build --release --example seqlock_bench_handoff && taskset -c {{ cores }} cargo run --release --example seqlock_bench_handoff"
