@@ -15,6 +15,7 @@ pub fn new<T: Copy>(initial_value: T) -> (Writer<T>, Reader<T>) {
     (writer, reader)
 }
 
+#[repr(C, align(128))]
 pub(super) struct SeqLock<T: Copy> {
     seq: AtomicU64,
     data: Cell<T>,
