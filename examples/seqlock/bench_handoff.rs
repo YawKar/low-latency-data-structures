@@ -92,20 +92,23 @@ fn main() {
             let mut hist = Histogram::<u64>::new(3).unwrap();
             let mut seen: u64 = 0;
             barrier.wait();
+            let mut last_ts = INIT_VALUE;
             loop {
-                barrier.wait();
                 let ts = reader.read();
                 let now = rdtscp();
                 if done.load(Ordering::Acquire) {
                     break;
                 }
+                if ts == last_ts {
+                    continue;
+                }
+                last_ts = ts;
                 if seen >= WARMUP {
                     // wrapping_sub guards against rare cross-core TSC skew;
                     // record() will reject zero/wraparound silently via ok().
                     let _ = hist.record(now.wrapping_sub(ts));
                 }
                 seen += 1;
-                barrier.wait();
             }
             hist
         })
@@ -125,15 +128,16 @@ fn main() {
                 "writer not pinned where requested"
             );
 
+            const BUSY_CYCLES_GIVE_READER_TIME: u64 = 5000;
             barrier.wait();
             for _ in 0..N {
                 let ts = rdtscp();
                 writer.write(ts);
-                barrier.wait();
-                barrier.wait();
+                while ts + BUSY_CYCLES_GIVE_READER_TIME > rdtscp() {
+                    std::hint::spin_loop();
+                }
             }
             done.store(true, Ordering::Release);
-            barrier.wait();
         })
     };
 
