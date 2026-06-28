@@ -1,6 +1,6 @@
 use std::cell::Cell;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering, fence};
 
 use crate::seqlock::reader::Reader;
 use crate::seqlock::writer::Writer;
@@ -28,11 +28,14 @@ unsafe impl<T: Copy> Sync for SeqLock<T> {}
 impl<T: Copy> SeqLock<T> {
     #[inline]
     pub(super) fn write(&self, value: T) {
-        self.seq.fetch_add(1, Ordering::Release);
+        let s = self.seq.load(Ordering::Relaxed);
+        self.seq.store(s.wrapping_add(1), Ordering::Relaxed);
+        // ARM: prevents the write from reordering above the s load
+        fence(Ordering::Release);
         // SAFETY: SeqLock utilizes UB and volatile here adds guarantees that neither compiler, nor
         // processor will try to reorder things
         unsafe { self.data.as_ptr().write_volatile(value) };
-        self.seq.fetch_add(1, Ordering::Release);
+        self.seq.store(s.wrapping_add(2), Ordering::Release);
     }
 
     #[inline]
@@ -44,7 +47,9 @@ impl<T: Copy> SeqLock<T> {
             }
             // SAFETY: look at SAFETY commentary in write method
             let read_attempt = unsafe { self.data.as_ptr().read_volatile() };
-            let s2 = self.seq.load(Ordering::Acquire);
+            // ARM: prevents the read from reordering below the s2 load
+            fence(Ordering::Acquire);
+            let s2 = self.seq.load(Ordering::Relaxed);
             if s1 == s2 {
                 return read_attempt;
             }
