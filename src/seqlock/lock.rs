@@ -128,8 +128,10 @@ mod tests {
         writer_h.join().unwrap();
         let readers_results: Vec<Vec<u64>> =
             readers_hs.into_iter().map(|h| h.join().unwrap()).collect();
-        assert!(readers_results.iter().all(
-            |result| result[1..VALUES.len() + 1] == VALUES && result.len() - 1 == VALUES.len()
-        ));
+        assert!(
+            readers_results
+                .iter()
+                .all(|result| result.len() == VALUES.len() + 1 && &result[1..] == &VALUES[..])
+        );
     }
 }
