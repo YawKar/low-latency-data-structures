@@ -214,7 +214,8 @@ test-loom:
 # Run dhat tests (requires dhat global allocator)
 [group("Tests")]
 test-dhat:
-    @cargo test --no-default-features --features tests_dhat
+    @# dhat tests should run sequentially as they affect each other through heapstats
+    @cargo test --no-default-features --features tests_dhat -- --test-threads=1
 
 [group("Benches")]
 view-bench-report:

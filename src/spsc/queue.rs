@@ -502,9 +502,6 @@ mod tests_loom {
 mod tests_dhat {
     use super::*;
 
-    #[global_allocator]
-    static ALLOC: dhat::Alloc = dhat::Alloc;
-
     #[test]
     fn hot_path_zero_allocations() {
         let _profiler = dhat::Profiler::builder().testing().build();

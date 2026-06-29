@@ -138,3 +138,27 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[cfg(feature = "tests_dhat")]
+mod tests_dhat {
+    use std::hint::black_box;
+
+    use super::*;
+
+    #[test]
+    fn hot_path_without_allocations() {
+        let _profiler = dhat::Profiler::builder().testing().build();
+        let (writer, reader) = new(0);
+        const ITERS: u64 = 10_000_000;
+
+        let before = dhat::HeapStats::get();
+        for i in 0..ITERS {
+            writer.write(black_box(i));
+            black_box(reader.read());
+        }
+        let after = dhat::HeapStats::get();
+
+        assert_eq!(before, after);
+    }
+}
