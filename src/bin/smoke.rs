@@ -1,9 +1,12 @@
+use low_latency_data_structures::spmc::consumer::ReadResult;
+use low_latency_data_structures::spmc::{self};
 use low_latency_data_structures::{seqlock, spsc};
 
 fn main() {
     println!("hello from smoke tests");
     smoke_spsc();
     smoke_seqlock();
+    smoke_spmc();
     println!("smoke tests seem ok");
 }
 
@@ -19,4 +22,17 @@ fn smoke_seqlock() {
     let (writer, reader) = seqlock::new(0);
     writer.write(123);
     assert_eq!(reader.read(), 123);
+}
+
+fn smoke_spmc() {
+    println!("smoke_spmc...");
+    let (producer, consumers) = spmc::new::<i32, 128, 2>();
+    let [mut c1, mut c2] = consumers;
+    assert_eq!(c1.try_read(), ReadResult::Empty);
+    assert_eq!(c2.try_read(), ReadResult::Empty);
+    producer.publish(123);
+    assert_eq!(c1.try_read(), ReadResult::Value(123));
+    assert_eq!(c2.try_read(), ReadResult::Value(123));
+    assert_eq!(c1.try_read(), ReadResult::Empty);
+    assert_eq!(c2.try_read(), ReadResult::Empty);
 }
