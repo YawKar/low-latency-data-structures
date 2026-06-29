@@ -2,7 +2,7 @@ use std::hint::black_box;
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use duplicate::duplicate;
-use low_latency_data_structures::spsc::new;
+use low_latency_data_structures::spmc::new;
 
 criterion_main!(benches);
 
@@ -12,7 +12,7 @@ criterion_group!(benches, single_thread_ping_pong,);
 /// Measures cost of push/pop round-trip in 1 thread. No cross-core coherency.
 /// No actual queuing.
 fn single_thread_ping_pong(c: &mut Criterion) {
-    let mut g = c.benchmark_group("spsc/single_thread_ping_pong");
+    let mut g = c.benchmark_group("spmc/single_thread_ping_pong");
     duplicate! {
         [
             CAPACITY;
@@ -23,10 +23,11 @@ fn single_thread_ping_pong(c: &mut Criterion) {
         {
             let capacity_label = CAPACITY;
             g.bench_function(format!("capacity={capacity_label}"), |b| {
-                let (p, c) = new::<_, CAPACITY>();
+                let (p, c) = new::<_, CAPACITY, 1>();
+                let [mut c] = c;
                 b.iter(|| {
-                    black_box(p.push(black_box(42)));
-                    black_box(c.pop());
+                    black_box(p.publish(black_box(42)));
+                    black_box(c.try_read());
                 });
             });
         }

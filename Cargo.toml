@@ -30,11 +30,24 @@ bytemuck = "1.25.0"
 criterion = { version = "0.8.2", features = ["html_reports"] }
 hdrhistogram = "7.5.4"
 
-# SPSC benches
+# =============================================================================
+# Benchmarks
+# =============================================================================
 [[bench]]
 name = "spsc"
 harness = false
 
+[[bench]]
+name = "seqlock"
+harness = false
+
+[[bench]]
+name = "spmc"
+harness = false
+
+# =============================================================================
+# Examples
+# =============================================================================
 [[example]]
 name = "spsc_bench_handoff"
 path = "examples/spsc/bench_handoff_under_coherency_contention.rs"
@@ -48,11 +61,6 @@ harness = false
 [[example]]
 name = "spsc_bench_drain"
 path = "examples/spsc/bench_drain.rs"
-harness = false
-
-# SeqLock benches
-[[bench]]
-name = "seqlock"
 harness = false
 
 [[example]]

@@ -291,3 +291,8 @@ bench-seqlock-micro:
 [group("Benches: SeqLock")]
 bench-seqlock-handoff cores:
     sudo bash -c "ulimit -l 32000 && cargo build --release --example seqlock_bench_handoff && taskset -c {{ cores }} cargo run --release --example seqlock_bench_handoff"
+
+# Benches only very tiny single-threaded deterministic flow
+[group("Benches: SPMC")]
+bench-spmc-micro:
+    cargo bench --no-default-features --bench spmc

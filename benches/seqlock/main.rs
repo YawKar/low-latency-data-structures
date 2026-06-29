@@ -10,7 +10,7 @@ criterion_group!(benches, single_thread_write_read);
 /// Measures cost of write/read round-trip in 1 thread. No cross-core coherency.
 /// No actual queuing.
 fn single_thread_write_read(c: &mut Criterion) {
-    let mut g = c.benchmark_group("single_thread_write_read");
+    let mut g = c.benchmark_group("seqlock/single_thread_write_read");
     g.bench_function("ping_pong_rtt", |b| {
         let (writer, reader) = new(0);
         b.iter(|| {
