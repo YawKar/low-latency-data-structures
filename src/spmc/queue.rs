@@ -17,15 +17,13 @@ use crate::spmc::producer::{Producer, ProducerState};
 /// seq!(N in 2..20 {
 ///     {
 ///         const CAP: usize = 2usize.wrapping_pow(N);
-///         let _fail = new::<u64, { CAP - 1 }, 1>();
-///         let _fail = new::<u64, { CAP + 1 }, 3>();
+///         let _fail = new::<u64, { CAP - 1 }, 3>();
+///         let _fail = new::<u64, { CAP + 1 }, 4>();
 ///     }
 /// });
 /// ```
-pub fn new<T, const CAPACITY: usize, const NCONSUMERS: usize>() -> (
-    Producer<T, CAPACITY, NCONSUMERS>,
-    [Consumer<T, CAPACITY, NCONSUMERS>; NCONSUMERS],
-)
+pub fn new<T, const CAPACITY: usize, const NCONSUMERS: usize>()
+-> (Producer<T, CAPACITY>, [Consumer<T, CAPACITY>; NCONSUMERS])
 where
     T: bytemuck::AnyBitPattern,
 {
@@ -54,7 +52,7 @@ pub(super) struct Slot<T: bytemuck::AnyBitPattern> {
     pub(super) data: UnsafeCell<T>,
 }
 
-pub(super) struct Queue<T, const CAPACITY: usize, const NCONSUMERS: usize>
+pub(super) struct Queue<T, const CAPACITY: usize>
 where
     T: bytemuck::AnyBitPattern,
 {
@@ -64,14 +62,11 @@ where
 
 // SAFETY: Queue uses Slot<T> which is !Sync because of UnsafeCell, but the queue itself can only be
 // used through publish/Consumer APIs both of which synchronize themselves using seqlock seq.
-unsafe impl<T: bytemuck::AnyBitPattern, const CAPACITY: usize, const NCONSUMERS: usize> Sync
-    for Queue<T, CAPACITY, NCONSUMERS>
-{
-}
+unsafe impl<T: bytemuck::AnyBitPattern, const CAPACITY: usize> Sync for Queue<T, CAPACITY> {}
 
-static_assertions::assert_impl_all!(Queue<u32, 1, 1>: Sync, Send);
+static_assertions::assert_impl_all!(Queue<u32, 1>: Sync, Send);
 
-impl<T, const CAPACITY: usize, const NCONSUMERS: usize> Queue<T, CAPACITY, NCONSUMERS>
+impl<T, const CAPACITY: usize> Queue<T, CAPACITY>
 where
     T: bytemuck::AnyBitPattern,
 {
