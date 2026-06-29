@@ -82,7 +82,7 @@ where
         let seq_no = w_pos.wrapping_mul(2);
         // SAFETY: slots buffer is guaranteed to be the length of CAPACITY items
         let slot = unsafe { self.slots.get_unchecked(w_pos & (CAPACITY - 1)) };
-        slot.seq.store(seq_no.wrapping_add(1), Ordering::Release);
+        slot.seq.store(seq_no.wrapping_add(1), Ordering::Relaxed);
         // ARM: prevent the subsequent write from moving above the odd seq store
         fence(Ordering::Release);
         unsafe { slot.data.get().write_volatile(value) };
