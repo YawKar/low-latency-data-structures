@@ -296,3 +296,8 @@ bench-seqlock-handoff cores:
 [group("Benches: SPMC")]
 bench-spmc-micro:
     cargo bench --no-default-features --bench spmc
+
+# Handoff benchmark. Measures latency from the push to the pop of the item.
+[group("Benches: SPMC")]
+bench-spmc-handoff cores:
+    sudo bash -c "ulimit -l 32000 && cargo build --release --example spmc_bench_handoff && taskset -c {{ cores }} cargo run --release --example spmc_bench_handoff"

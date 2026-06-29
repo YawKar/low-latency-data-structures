@@ -67,3 +67,8 @@ harness = false
 name = "seqlock_bench_handoff"
 path = "examples/seqlock/bench_handoff.rs"
 harness = false
+
+[[example]]
+name = "spmc_bench_handoff"
+path = "examples/spmc/bench_handoff_under_coherency_contention.rs"
+harness = false
