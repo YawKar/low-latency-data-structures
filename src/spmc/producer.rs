@@ -9,25 +9,22 @@ pub(super) struct ProducerState {
     pub(super) write_cursor: AtomicUsize,
 }
 
-pub struct Producer<T: bytemuck::AnyBitPattern, const CAPACITY: usize, const NCONSUMERS: usize> {
-    inner: Arc<Queue<T, CAPACITY, NCONSUMERS>>,
+pub struct Producer<T: bytemuck::AnyBitPattern, const CAPACITY: usize> {
+    inner: Arc<Queue<T, CAPACITY>>,
     _not_sync: PhantomData<*const ()>,
 }
 
 // SAFETY: it is Send on its own but we need to restrict only Sync.
-unsafe impl<T: bytemuck::AnyBitPattern, const CAPACITY: usize, const NCONSUMERS: usize> Send
-    for Producer<T, CAPACITY, NCONSUMERS>
-{
-}
+unsafe impl<T: bytemuck::AnyBitPattern, const CAPACITY: usize> Send for Producer<T, CAPACITY> {}
 
-static_assertions::assert_impl_all!(Producer<u32, 1, 1>: Send);
-static_assertions::assert_not_impl_any!(Producer<u32, 1, 1>: Sync, Clone, Copy);
+static_assertions::assert_impl_all!(Producer<u32, 1>: Send);
+static_assertions::assert_not_impl_any!(Producer<u32, 1>: Sync, Clone, Copy);
 
-impl<T, const CAPACITY: usize, const NCONSUMERS: usize> Producer<T, CAPACITY, NCONSUMERS>
+impl<T, const CAPACITY: usize> Producer<T, CAPACITY>
 where
     T: bytemuck::AnyBitPattern,
 {
-    pub(super) fn new(queue: Arc<Queue<T, CAPACITY, NCONSUMERS>>) -> Self {
+    pub(super) fn new(queue: Arc<Queue<T, CAPACITY>>) -> Self {
         Self {
             inner: queue,
             _not_sync: PhantomData,

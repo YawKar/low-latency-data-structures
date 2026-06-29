@@ -14,30 +14,31 @@ pub(super) struct ConsumerState {
 pub enum ReadResult<T> {
     Value(T),
     Empty,
-    Lapped { skipped: usize },
+    /// When the writer outruns the consumer, the latter will jump to its last cached writer cursor.
+    /// `skipped` will be equal to the elements that won't be read by the consumer.
+    Lapped {
+        skipped: usize,
+    },
 }
 
 #[repr(C)]
-pub struct Consumer<T: bytemuck::AnyBitPattern, const CAPACITY: usize, const NCONSUMERS: usize> {
+pub struct Consumer<T: bytemuck::AnyBitPattern, const CAPACITY: usize> {
     state: ConsumerState,
-    inner: Arc<Queue<T, CAPACITY, NCONSUMERS>>,
+    inner: Arc<Queue<T, CAPACITY>>,
     _not_sync: PhantomData<*const ()>,
 }
 
 // SAFETY: It is Send on its own but we need to forbid the Sync.
-unsafe impl<T: bytemuck::AnyBitPattern, const CAPACITY: usize, const NCONSUMERS: usize> Send
-    for Consumer<T, CAPACITY, NCONSUMERS>
-{
-}
+unsafe impl<T: bytemuck::AnyBitPattern, const CAPACITY: usize> Send for Consumer<T, CAPACITY> {}
 
-static_assertions::assert_impl_all!(Consumer<u32, 2, 1>: Send);
-static_assertions::assert_not_impl_any!(Consumer<u32, 2, 1>: Sync, Clone, Copy);
+static_assertions::assert_impl_all!(Consumer<u32, 2>: Send);
+static_assertions::assert_not_impl_any!(Consumer<u32, 2>: Sync, Clone, Copy);
 
-impl<T, const CAPACITY: usize, const NCONSUMERS: usize> Consumer<T, CAPACITY, NCONSUMERS>
+impl<T, const CAPACITY: usize> Consumer<T, CAPACITY>
 where
     T: bytemuck::AnyBitPattern,
 {
-    pub(super) fn new(queue: Arc<Queue<T, CAPACITY, NCONSUMERS>>) -> Self {
+    pub(super) fn new(queue: Arc<Queue<T, CAPACITY>>) -> Self {
         Self {
             state: ConsumerState {
                 read_cursor: 0,
