@@ -21,7 +21,6 @@ pub enum ReadResult<T> {
     },
 }
 
-#[repr(C)]
 pub struct Consumer<T: bytemuck::AnyBitPattern, const CAPACITY: usize> {
     state: ConsumerState,
     inner: Arc<Queue<T, CAPACITY>>,
