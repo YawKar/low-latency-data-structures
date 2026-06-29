@@ -5,6 +5,18 @@ use crate::shim::sync::{Arc, atomic};
 use crate::spsc::consumer::{Consumer, ConsumerState};
 use crate::spsc::producer::{Producer, ProducerState};
 
+/// Should fail at compile time if used with CAPACITY not a power of two:
+/// ```compile_fail
+/// # use low_latency_data_structures::spsc::new;
+/// # use seq_macro::seq;
+/// seq!(N in 2..20 {
+///     {
+///         const CAP: usize = 2usize.wrapping_pow(N);
+///         let _fail = new::<u64, { CAP - 1 }>();
+///         let _fail = new::<u64, { CAP + 1 }>();
+///     }
+/// });
+/// ```
 pub fn new<T, const CAPACITY: usize>() -> (
     Producer<T, CAPACITY, impl Allocation<T>>,
     Consumer<T, CAPACITY, impl Allocation<T>>,
@@ -170,7 +182,6 @@ mod tests_basic {
     use std::thread;
 
     use seq_macro::seq;
-    use should_it_compile::should_not_compile;
 
     #[cfg(not(feature = "tests_hugepage"))]
     use super::new;
@@ -214,28 +225,6 @@ mod tests_basic {
             {
                 const POWER: usize = 2usize.pow(N);
                 new::<u32, POWER>();
-            }
-        });
-    }
-
-    #[test]
-    fn prohibits_queues_with_not_powers_of_two_capacity() {
-        seq!(N in 2..20 {
-            {
-                should_not_compile! {
-                    fn a() {
-                        const POWER: usize = 2usize.pow(N);
-                        const LESS: usize = POWER - 1;
-                        const MORE: usize = POWER + 1;
-                        new::<u32, LESS>();
-                    }
-                    fn b() {
-                        const POWER: usize = 2usize.pow(N);
-                        const LESS: usize = POWER - 1;
-                        const MORE: usize = POWER + 1;
-                        new::<u32, MORE>();
-                    }
-                };
             }
         });
     }

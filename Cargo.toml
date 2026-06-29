@@ -23,7 +23,6 @@ libc = "0.2.186"
 static_assertions = "1.1.0"
 quanta = "0.12.6"
 seq-macro = "0.3.6"
-should-it-compile = "0.1.1"
 duplicate = "2.0.1"
 bytemuck = "1.25.0"
 

@@ -7,13 +7,20 @@ use crate::spmc::producer::{Producer, ProducerState};
 
 /// Examples:
 /// ```
-/// # use low_latency_data_structures::spmc::queue::new;
+/// # use low_latency_data_structures::spmc::new;
 /// new::<u64, 4, 3>();
 /// ```
 /// Should not compile with queues of capacities other than powers of two:
 /// ```compile_fail
-/// # use low_latency_data_structures::spmc::queue::new;
-/// new::<u64, 3, 1>();
+/// # use low_latency_data_structures::spmc::new;
+/// # use seq_macro::seq;
+/// seq!(N in 2..20 {
+///     {
+///         const CAP: usize = 2usize.wrapping_pow(N);
+///         let _fail = new::<u64, { CAP - 1 }, 1>();
+///         let _fail = new::<u64, { CAP + 1 }, 3>();
+///     }
+/// });
 /// ```
 pub fn new<T, const CAPACITY: usize, const NCONSUMERS: usize>() -> (
     Producer<T, CAPACITY, NCONSUMERS>,
