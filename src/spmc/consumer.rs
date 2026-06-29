@@ -1,3 +1,4 @@
+use std::marker::PhantomData;
 use std::sync::Arc;
 use std::sync::atomic::{Ordering, fence};
 
@@ -20,7 +21,17 @@ pub enum ReadResult<T> {
 pub struct Consumer<T: bytemuck::AnyBitPattern, const CAPACITY: usize, const NCONSUMERS: usize> {
     state: ConsumerState,
     inner: Arc<Queue<T, CAPACITY, NCONSUMERS>>,
+    _not_sync: PhantomData<*const ()>,
 }
+
+// SAFETY: It is Send on its own but we need to forbid the Sync.
+unsafe impl<T: bytemuck::AnyBitPattern, const CAPACITY: usize, const NCONSUMERS: usize> Send
+    for Consumer<T, CAPACITY, NCONSUMERS>
+{
+}
+
+static_assertions::assert_impl_all!(Consumer<u32, 2, 1>: Send);
+static_assertions::assert_not_impl_any!(Consumer<u32, 2, 1>: Sync, Clone, Copy);
 
 impl<T, const CAPACITY: usize, const NCONSUMERS: usize> Consumer<T, CAPACITY, NCONSUMERS>
 where
@@ -33,6 +44,7 @@ where
                 cached_write_cursor: 0,
             },
             inner: queue,
+            _not_sync: PhantomData,
         }
     }
 
