@@ -1,5 +1,5 @@
 pub mod consumer;
 pub mod producer;
-pub mod queue;
+mod queue;
 
 pub use queue::new;
