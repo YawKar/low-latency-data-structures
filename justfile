@@ -301,3 +301,17 @@ bench-spmc-micro:
 [group("Benches: SPMC")]
 bench-spmc-handoff cores:
     sudo bash -c "ulimit -l 32000 && cargo build --release --example spmc_bench_handoff && taskset -c {{ cores }} cargo run --release --example spmc_bench_handoff"
+
+# Lapped recovery latency. Producer runs flat out, consumer adds a per-read
+# delay (sweep via BENCH_DELAYS=...). Reports value latency, recovery cycles
+# from Lapped to next Value, and skipped-count distribution.
+[group("Benches: SPMC")]
+bench-spmc-lapped cores:
+    sudo -E bash -c "ulimit -l 32000 && cargo build --release --example spmc_bench_lapped && taskset -c {{ cores }} cargo run --release --example spmc_bench_lapped"
+
+# Capacity sweep with a sustained producer. Single consumer reads as fast as
+# it can. Reports value latency and lap count per capacity, useful for
+# arguing about slot padding.
+[group("Benches: SPMC")]
+bench-spmc-capacity-sweep cores:
+    sudo bash -c "ulimit -l 32000 && cargo build --release --example spmc_bench_capacity_sweep && taskset -c {{ cores }} cargo run --release --example spmc_bench_capacity_sweep"

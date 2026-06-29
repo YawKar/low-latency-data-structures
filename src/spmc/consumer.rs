@@ -72,7 +72,16 @@ where
                 continue;
             }
             if seq1 != expected_seq {
-                // We were overlapped => skip everything and go up to the `write_cursor - 1`
+                // We were overlapped. Reload cached_write_cursor before jumping:
+                // under sustained producer overflow the cached value is itself
+                // stale (cached_write_cursor - 1 may have been lapped past
+                // again), and without the reload the consumer gets pinned in
+                // a Lapped -> Lapped cycle with skipped=0 forever.
+                self.state.cached_write_cursor = self
+                    .inner
+                    .producer_state
+                    .write_cursor
+                    .load(Ordering::Acquire);
                 let new_r_cursor = self.state.cached_write_cursor.wrapping_sub(1);
                 let skipped = new_r_cursor.wrapping_sub(self.state.read_cursor);
                 self.state.read_cursor = new_r_cursor;
