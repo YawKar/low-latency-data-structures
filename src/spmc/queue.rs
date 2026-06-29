@@ -131,6 +131,65 @@ mod tests {
     }
 
     #[test]
+    fn concurrent_single_producer_multiple_consumers() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::thread;
+
+        const CAPACITY: usize = 1024;
+        const NCONSUMERS: usize = 4;
+        const N: u64 = 200_000;
+
+        let (producer, consumers) = new::<u64, CAPACITY, NCONSUMERS>();
+        let done = Arc::new(AtomicBool::new(false));
+
+        let handles: Vec<_> = consumers
+            .into_iter()
+            .map(|mut c| {
+                let done = done.clone();
+                thread::spawn(move || -> u64 {
+                    let mut last: Option<u64> = None;
+                    let mut got = 0u64;
+                    loop {
+                        match c.try_read() {
+                            ReadResult::Value(v) => {
+                                if let Some(prev) = last {
+                                    assert!(v > prev);
+                                }
+                                last = Some(v);
+                                got += 1;
+                            }
+                            ReadResult::Lapped { .. } => {}
+                            ReadResult::Empty => {
+                                if done.load(Ordering::Acquire) {
+                                    while let ReadResult::Value(v) = c.try_read() {
+                                        if let Some(prev) = last {
+                                            assert!(v > prev);
+                                        }
+                                        last = Some(v);
+                                        got += 1;
+                                    }
+                                    return got;
+                                }
+                            }
+                        }
+                    }
+                })
+            })
+            .collect();
+
+        for i in 0..N {
+            producer.publish(i);
+        }
+        done.store(true, Ordering::Release);
+
+        for h in handles {
+            let got = h.join().unwrap();
+            assert!(got > 0);
+        }
+    }
+
+    #[test]
     fn consumer_can_be_overlapped_by_writer() {
         const CAPACITY: usize = 8;
         const NCONSUMERS: usize = 1;
@@ -138,17 +197,20 @@ mod tests {
         let [mut c1] = consumers;
         assert_eq!(c1.try_read(), ReadResult::Empty);
 
-        // cached_write_cursor will become 7
+        // After this loop write_cursor = 8. First try_read below loads it into
+        // cached_write_cursor and returns the first item.
         for i in 0..CAPACITY {
             producer.publish(i);
         }
-        // read_cursor will become 1
+        // read_cursor becomes 1.
         assert_eq!(c1.try_read(), ReadResult::Value(0));
+        // Two more publishes lap the consumer. write_cursor = 10 after these.
         producer.publish(CAPACITY + 1);
         producer.publish(CAPACITY + 2);
-        // because `cached_write_cursor - read_cursor = 6`
-        assert_eq!(c1.try_read(), ReadResult::Lapped { skipped: 6 });
-        // because `cached_write_cursor - 1 = 6` and 6 was written into this slot
-        assert_eq!(c1.try_read(), ReadResult::Value(CAPACITY - 1));
+        // The Lapped branch reloads cached_write_cursor (= 10) and jumps to
+        // cached - 1 = 9. skipped = 9 - read_cursor = 9 - 1 = 8.
+        assert_eq!(c1.try_read(), ReadResult::Lapped { skipped: 8 });
+        // Slot 9 & 7 = slot 1, last written at w_pos = 9 with data = CAPACITY + 2.
+        assert_eq!(c1.try_read(), ReadResult::Value(CAPACITY + 2));
     }
 }

@@ -72,3 +72,13 @@ harness = false
 name = "spmc_bench_handoff"
 path = "examples/spmc/bench_handoff_under_coherency_contention.rs"
 harness = false
+
+[[example]]
+name = "spmc_bench_lapped"
+path = "examples/spmc/bench_lapped.rs"
+harness = false
+
+[[example]]
+name = "spmc_bench_capacity_sweep"
+path = "examples/spmc/bench_capacity_sweep.rs"
+harness = false
