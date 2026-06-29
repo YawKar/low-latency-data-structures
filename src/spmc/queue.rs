@@ -62,6 +62,15 @@ where
     pub(super) slots: [Slot<T>; CAPACITY],
 }
 
+// SAFETY: Queue uses Slot<T> which is !Sync because of UnsafeCell, but the queue itself can only be
+// used through publish/Consumer APIs both of which synchronize themselves using seqlock seq.
+unsafe impl<T: bytemuck::AnyBitPattern, const CAPACITY: usize, const NCONSUMERS: usize> Sync
+    for Queue<T, CAPACITY, NCONSUMERS>
+{
+}
+
+static_assertions::assert_impl_all!(Queue<u32, 1, 1>: Sync, Send);
+
 impl<T, const CAPACITY: usize, const NCONSUMERS: usize> Queue<T, CAPACITY, NCONSUMERS>
 where
     T: bytemuck::AnyBitPattern,
