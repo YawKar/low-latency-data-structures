@@ -78,8 +78,6 @@ where
                 self.state.read_cursor = new_r_cursor;
                 return ReadResult::Lapped { skipped };
             }
-            // ASM: prevent the seq1 load from moving below the read
-            fence(Ordering::Acquire);
             let attempted_read = unsafe { slot.data.get().read_volatile() };
             // ASM: prevent the seq1 load from moving below the read
             fence(Ordering::Acquire);
