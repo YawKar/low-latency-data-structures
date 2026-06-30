@@ -14,6 +14,9 @@ keywords = ["lock-free", "low-latency", "spsc", "spmc", "seqlock"]
 categories = ["concurrency", "data-structures"]
 include = [
     "src/**/*.rs",
+    "examples/spsc/hello.rs",
+    "examples/spmc/hello.rs",
+    "examples/seqlock/hello.rs",
     "Cargo.toml",
     "README.md",
     "LICENSE",
