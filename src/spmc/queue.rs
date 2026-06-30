@@ -5,12 +5,28 @@ use std::sync::atomic::{AtomicUsize, Ordering, fence};
 use crate::spmc::consumer::Consumer;
 use crate::spmc::producer::{Producer, ProducerState};
 
-/// Examples:
+/// Creates a new SPMC broadcast queue with `CAPACITY` slots and `NCONSUMERS`
+/// pre-built [`Consumer`]s.
+///
+/// `CAPACITY` must be a power of two (compile-time enforced). The queue is
+/// allocated up front and never grows. `T: AnyBitPattern` is required so
+/// that torn reads materialise a valid `T` rather than triggering undefined
+/// behaviour; the surrounding seq protocol then rejects the torn value
+/// before it leaves [`Consumer::try_read`].
+///
+/// # Examples
+///
 /// ```
-/// # use low_latency_data_structures::spmc::new;
-/// new::<u64, 4, 3>();
+/// use low_latency_data_structures::spmc::{ReadResult, new};
+///
+/// let (producer, [mut a, mut b]) = new::<u64, 4, 2>();
+/// producer.publish(1);
+/// assert_eq!(a.try_read(), ReadResult::Value(1));
+/// assert_eq!(b.try_read(), ReadResult::Value(1));
 /// ```
-/// Should not compile with queues of capacities other than powers of two:
+///
+/// Capacities that are not powers of two fail to compile:
+///
 /// ```compile_fail
 /// # use low_latency_data_structures::spmc::new;
 /// # use seq_macro::seq;

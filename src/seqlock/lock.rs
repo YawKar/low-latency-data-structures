@@ -5,6 +5,21 @@ use std::sync::atomic::{AtomicU64, Ordering, fence};
 use crate::seqlock::reader::Reader;
 use crate::seqlock::writer::Writer;
 
+/// Creates a new seqlock initialised with `initial_value`.
+///
+/// Returns a paired `(Writer, Reader)`. Additional readers can be obtained
+/// by cloning the [`Reader`].
+///
+/// # Examples
+///
+/// ```
+/// use low_latency_data_structures::seqlock::new;
+///
+/// let (writer, reader) = new(0u64);
+/// assert_eq!(reader.read(), 0);
+/// writer.write(42);
+/// assert_eq!(reader.read(), 42);
+/// ```
 pub fn new<T: bytemuck::AnyBitPattern>(initial_value: T) -> (Writer<T>, Reader<T>) {
     let sl = Arc::new(SeqLock {
         seq: AtomicU64::new(0),
@@ -22,10 +37,12 @@ pub(super) struct SeqLock<T: bytemuck::AnyBitPattern> {
     data: UnsafeCell<T>,
 }
 
-// SAFETY: UB1: UnsafeCell is not Sync but we synchronize access through the write()/read() methods.
-// UB2: Torn reads of `data` are racy and undefined by the abstract model, but `T: AnyBitPattern`
-// guarantees every bit pattern is a valid T, so the materialized value is at worst stale,
-// never UB. Stale values are then rejected by the seq check before they propagate.
+// SAFETY: UnsafeCell is not Sync but access is synchronised through the
+// write()/read() methods using the seq-number protocol. Torn reads of `data`
+// would be undefined under the abstract C11/C++11 model, but `T:
+// AnyBitPattern` guarantees every bit pattern materialises a valid T, so the
+// worst-case observed value is stale, never UB. The seq check around the
+// read rejects stale or torn values before they leave `Reader::read`.
 unsafe impl<T: bytemuck::AnyBitPattern> Sync for SeqLock<T> {}
 
 impl<T: bytemuck::AnyBitPattern> SeqLock<T> {
@@ -35,8 +52,9 @@ impl<T: bytemuck::AnyBitPattern> SeqLock<T> {
         self.seq.store(s.wrapping_add(1), Ordering::Relaxed);
         // ARM: prevents the write from reordering above the s load
         fence(Ordering::Release);
-        // SAFETY: SeqLock utilizes UB and volatile here adds guarantees that neither compiler, nor
-        // processor will try to reorder things
+        // SAFETY: see the unsafe impl Sync for SeqLock above. write_volatile
+        // also pins the store: it cannot be reordered with the surrounding
+        // seq stores by the compiler.
         unsafe { self.data.get().write_volatile(value) };
         self.seq.store(s.wrapping_add(2), Ordering::Release);
     }
@@ -48,7 +66,8 @@ impl<T: bytemuck::AnyBitPattern> SeqLock<T> {
             if s1 & 1 == 1 {
                 continue;
             }
-            // SAFETY: look at SAFETY commentary in write method
+            // SAFETY: see the unsafe impl Sync for SeqLock above. The torn
+            // read is filtered by the s1==s2 check below.
             let read_attempt = unsafe { self.data.get().read_volatile() };
             // ARM: prevents the read from reordering below the s2 load
             fence(Ordering::Acquire);

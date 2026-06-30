@@ -1,24 +1,56 @@
 [package]
 name = "low-latency-data-structures"
-version = "0.1.0"
+version = "0.0.1"
 edition = "2024"
+rust-version = "1.95"
+authors = ["yawkar <yawkarpov@gmail.com>"]
+license = "MIT"
+description = "Experimental lock-free SPSC, SPMC broadcast, and SeqLock primitives tuned for ultra-low-latency systems"
+repository = "https://github.com/YawKar/low-latency-data-structures"
+homepage = "https://github.com/YawKar/low-latency-data-structures"
+documentation = "https://docs.rs/low-latency-data-structures"
+readme = "README.md"
+keywords = ["lock-free", "low-latency", "spsc", "spmc", "seqlock"]
+categories = ["concurrency", "data-structures"]
+include = [
+    "src/**/*.rs",
+    "Cargo.toml",
+    "README.md",
+    "LICENSE",
+]
+
+[package.metadata.docs.rs]
+all-features = false
+rustdoc-args = ["--cfg", "docsrs"]
 
 [package.metadata.bin]
 rustfmt-unstable = { version = "^1.0.0" }
 cargo-show-asm = { version = "^0.2.61" }
 
+[lints.rust]
+missing_docs = "warn"
+unsafe_op_in_unsafe_fn = "warn"
+
 [features]
 default = []
+# Internal: gates the basic test suite. Not intended for downstream use.
 tests_basic = []
+# Internal: gates hugepage-backed tests. Requires /proc/sys/vm/nr_hugepages > 0.
 tests_hugepage = []
+# Internal: gates loom model-checking tests. Pulls in the loom crate as a
+# replacement for std::sync primitives via the shim module.
 tests_loom = ["dep:loom"]
-tests_dhat = ["dep:dhat"]
+# Internal: gates dhat allocation-counting tests. Replaces the global allocator.
+tests_dhat = []
+# Internal: exposes the bench utilities module to the examples crates. Not
+# intended for downstream use; the module is doc(hidden) and may change at any
+# time within 0.0.x.
+_bench_utils = []
 
 [dependencies]
 anyhow = "1.0.102"
 core_affinity = "0.8.3"
-dhat = {version = "0.3.3", optional = true}
-loom = {version = "0.7.2", optional = true}
+loom = { version = "0.7.2", optional = true }
 libc = "0.2.186"
 static_assertions = "1.1.0"
 quanta = "0.12.6"
@@ -29,6 +61,7 @@ bytemuck = "1.25.0"
 [dev-dependencies]
 criterion = { version = "0.8.2", features = ["html_reports"] }
 hdrhistogram = "7.5.4"
+dhat = "0.3.3"
 
 # =============================================================================
 # Benchmarks
@@ -49,36 +82,48 @@ harness = false
 # Examples
 # =============================================================================
 [[example]]
+name = "spsc_hello"
+path = "examples/spsc/hello.rs"
+
+[[example]]
+name = "spmc_hello"
+path = "examples/spmc/hello.rs"
+
+[[example]]
+name = "seqlock_hello"
+path = "examples/seqlock/hello.rs"
+
+[[example]]
 name = "spsc_bench_handoff"
 path = "examples/spsc/bench_handoff_under_coherency_contention.rs"
-harness = false
+required-features = ["_bench_utils"]
 
 [[example]]
 name = "spsc_bench_throttled"
 path = "examples/spsc/bench_throttled.rs"
-harness = false
+required-features = ["_bench_utils"]
 
 [[example]]
 name = "spsc_bench_drain"
 path = "examples/spsc/bench_drain.rs"
-harness = false
+required-features = ["_bench_utils"]
 
 [[example]]
 name = "seqlock_bench_handoff"
 path = "examples/seqlock/bench_handoff.rs"
-harness = false
+required-features = ["_bench_utils"]
 
 [[example]]
 name = "spmc_bench_handoff"
 path = "examples/spmc/bench_handoff_under_coherency_contention.rs"
-harness = false
+required-features = ["_bench_utils"]
 
 [[example]]
 name = "spmc_bench_lapped"
 path = "examples/spmc/bench_lapped.rs"
-harness = false
+required-features = ["_bench_utils"]
 
 [[example]]
 name = "spmc_bench_capacity_sweep"
 path = "examples/spmc/bench_capacity_sweep.rs"
-harness = false
+required-features = ["_bench_utils"]

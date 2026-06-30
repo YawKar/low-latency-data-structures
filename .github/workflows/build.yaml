@@ -28,3 +28,17 @@ jobs:
         run: nix develop -c just format-check
       - name: Check lint
         run: nix develop -c just lint
+      - name: Build examples
+        run: nix develop -c just examples-build
+      - name: Basic tests
+        run: nix develop -c just test-basic
+      - name: Doc-tests
+        run: nix develop -c just test-doc
+      - name: Doc build
+        run: nix develop -c just doc-check
+      - name: Loom tests
+        run: nix develop -c just test-loom
+      - name: Dhat tests
+        run: nix develop -c just test-dhat
+      - name: Smoke test
+        run: nix develop -c just test-e2e-smoke
