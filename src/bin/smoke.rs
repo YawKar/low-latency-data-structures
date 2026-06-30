@@ -1,5 +1,8 @@
-use low_latency_data_structures::spmc::consumer::ReadResult;
-use low_latency_data_structures::spmc::{self};
+//! End-to-end smoke binary. Exercises one trivial path through each
+//! primitive so a release build catches obvious regressions before the
+//! benchmark suite runs.
+
+use low_latency_data_structures::spmc::{self, ReadResult};
 use low_latency_data_structures::{seqlock, spsc};
 
 fn main() {

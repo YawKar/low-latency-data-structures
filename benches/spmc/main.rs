@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 use std::hint::black_box;
 
 use criterion::{Criterion, criterion_group, criterion_main};
@@ -27,7 +29,7 @@ fn single_thread_ping_pong(c: &mut Criterion) {
                 let [mut c] = c;
                 b.iter(|| {
                     black_box(p.publish(black_box(42)));
-                    black_box(c.try_read());
+                    let _ = black_box(c.try_read());
                 });
             });
         }

@@ -30,8 +30,7 @@ use std::thread;
 use hdrhistogram::Histogram;
 use low_latency_data_structures::bench::tsc::rdtscp;
 use low_latency_data_structures::bench::{loc, preflight};
-use low_latency_data_structures::spmc::consumer::ReadResult;
-use low_latency_data_structures::spmc::new;
+use low_latency_data_structures::spmc::{ReadResult, new};
 
 fn preflight(used_cores: &[usize]) {
     let mut r = preflight::PreflightReport::default();

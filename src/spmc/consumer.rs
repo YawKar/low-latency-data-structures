@@ -10,21 +10,51 @@ pub(super) struct ConsumerState {
     cached_write_cursor: usize,
 }
 
-#[derive(Debug, PartialEq)]
+/// Outcome of a [`Consumer::try_read`] call.
+///
+/// `try_read` is non-blocking and never allocates, so the return value
+/// distinguishes three cases the caller must handle: a successful read, an
+/// empty queue, or a detected lap. The enum is `#[must_use]` because
+/// silently dropping `Value` would lose the only copy of the data, and
+/// silently dropping `Lapped` would hide message loss.
+#[must_use = "the returned ReadResult indicates whether a value was read, the queue was empty, or the consumer was lapped"]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReadResult<T> {
+    /// A value was successfully read from the next slot.
     Value(T),
+    /// The queue is currently empty.
     Empty,
-    /// When the writer outruns the consumer, the latter will jump to its last cached writer cursor.
-    /// `skipped` will be equal to the elements that won't be read by the consumer.
+    /// The producer lapped this consumer at least once. The read cursor has
+    /// been advanced to the most recently published slot; `skipped` is the
+    /// number of values that were never observed.
     Lapped {
+        /// Number of values skipped over by the lap-recovery jump.
         skipped: usize,
     },
 }
 
+/// A reading handle of an SPMC broadcast queue.
+///
+/// Each consumer has its own private read cursor: every consumer observes
+/// every value the producer publishes, independently, unless it falls behind
+/// by more than `CAPACITY` slots.
+///
+/// `Consumer` is [`Send`] but not [`Sync`]: at most one thread may call
+/// [`try_read`](Self::try_read) on a given consumer at a time. To get more
+/// consumers, request more at construction via [`new`](crate::spmc::new).
 pub struct Consumer<T: bytemuck::AnyBitPattern, const CAPACITY: usize> {
     state: ConsumerState,
     inner: Arc<Queue<T, CAPACITY>>,
     _not_sync: PhantomData<*const ()>,
+}
+
+impl<T: bytemuck::AnyBitPattern, const CAPACITY: usize> std::fmt::Debug for Consumer<T, CAPACITY> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Consumer")
+            .field("read_cursor", &self.state.read_cursor)
+            .field("cached_write_cursor", &self.state.cached_write_cursor)
+            .finish_non_exhaustive()
+    }
 }
 
 // SAFETY: It is Send on its own but we need to forbid the Sync.
@@ -48,6 +78,36 @@ where
         }
     }
 
+    /// Attempts to read the next value.
+    ///
+    /// Wait-free in the common case (value available, or queue empty);
+    /// lock-free when the producer is actively writing the target slot (the
+    /// consumer spin-loops until the producer publishes).
+    ///
+    /// # Protocol
+    ///
+    /// Each slot carries an even/odd seq number: even = stable, odd = mid
+    /// write. The consumer:
+    ///
+    /// 1. Loads the slot's seq. If odd, spin until it goes even.
+    /// 2. If the even seq is not the one expected for the current read
+    ///    cursor, the producer has lapped us; reload the write cursor, jump
+    ///    to the most recent slot, and return [`ReadResult::Lapped`].
+    /// 3. Otherwise read the slot's data, then re-load the seq. If the seq
+    ///    is unchanged the read is committed and a [`ReadResult::Value`] is
+    ///    returned; if the seq has moved, the read was torn and the loop
+    ///    retries.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use low_latency_data_structures::spmc::{ReadResult, new};
+    ///
+    /// let (producer, [mut consumer]) = new::<u64, 16, 1>();
+    /// assert_eq!(consumer.try_read(), ReadResult::Empty);
+    /// producer.publish(7);
+    /// assert_eq!(consumer.try_read(), ReadResult::Value(7));
+    /// ```
     #[inline]
     pub fn try_read(&mut self) -> ReadResult<T> {
         if self.state.read_cursor == self.state.cached_write_cursor {
@@ -87,6 +147,8 @@ where
                 self.state.read_cursor = new_r_cursor;
                 return ReadResult::Lapped { skipped };
             }
+            // SAFETY: T: AnyBitPattern, so even a torn read materialises a valid T;
+            // the seq2 check below rejects the value if the read raced a producer write.
             let attempted_read = unsafe { slot.data.get().read_volatile() };
             // ASM: prevent the seq1 load from moving below the read
             fence(Ordering::Acquire);

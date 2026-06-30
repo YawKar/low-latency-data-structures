@@ -1,12 +1,18 @@
-//! SeqLock implementation.
-//! What needs to be known: SeqLocks technically utilize UB, but it works.
-//! What exact UB is utilized:
-//!     data race on `*mut T` (reads via volatile while another thread writes).
-//!     SeqLock is a UB in Rust undefined core guidelines (C11/C++11 memory model): https://internals.rust-lang.org/t/include-racy-reads-in-rust-memory-model-with-maybeinvalid-t/24289
-//! What mitigates it: torn read value don't propagate thanks to seq number check.
+//! Single-writer, multi-reader cell with seqlock-based validation.
+//!
+//! The reader/writer protocol relies on torn reads being well-defined for
+//! `T: bytemuck::AnyBitPattern`: any bit pattern is a valid `T`, so a
+//! materialised torn value is at worst stale or garbled, never undefined
+//! behaviour. The surrounding sequence-number check rejects such reads
+//! before they leave [`Reader::read`].
+//!
+//! See [`new`] for the entry point, [`Writer`] for writing, and [`Reader`]
+//! for reading.
 
 mod lock;
-pub mod reader;
-pub mod writer;
+mod reader;
+mod writer;
 
 pub use lock::new;
+pub use reader::Reader;
+pub use writer::Writer;

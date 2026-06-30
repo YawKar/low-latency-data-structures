@@ -5,7 +5,24 @@ use crate::shim::sync::{Arc, atomic};
 use crate::spsc::consumer::{Consumer, ConsumerState};
 use crate::spsc::producer::{Producer, ProducerState};
 
-/// Should fail at compile time if used with CAPACITY not a power of two:
+/// Creates a new heap-backed SPSC queue with `CAPACITY` slots.
+///
+/// `CAPACITY` must be a power of two (compile-time enforced). The slot
+/// buffer is allocated up front and locked into RAM via `mlock` so the
+/// hot path never page-faults.
+///
+/// # Examples
+///
+/// ```
+/// use low_latency_data_structures::spsc::new;
+///
+/// let (producer, consumer) = new::<u64, 8>();
+/// assert_eq!(producer.push(1), None);
+/// assert_eq!(consumer.pop(), Some(1));
+/// ```
+///
+/// Capacities that are not powers of two fail to compile:
+///
 /// ```compile_fail
 /// # use low_latency_data_structures::spsc::new;
 /// # use seq_macro::seq;
@@ -45,6 +62,27 @@ pub fn new<T, const CAPACITY: usize>() -> (
     (producer, consumer)
 }
 
+/// Creates a new SPSC queue with `CAPACITY` slots backed by 2 MiB hugepages.
+///
+/// `CAPACITY` must be a power of two (compile-time enforced). The slot
+/// buffer is allocated via `mmap` with `MAP_HUGETLB | MAP_HUGE_2MB` and
+/// `MAP_POPULATE`, then locked into RAM. Useful when the slot buffer is
+/// large enough that the regular allocation would thrash the dTLB.
+///
+/// # Panics
+///
+/// Panics if hugepages are unavailable on the system. Enable them with
+/// `sysctl -w vm.nr_hugepages=N` first.
+///
+/// # Examples
+///
+/// ```no_run
+/// use low_latency_data_structures::spsc::new_hugepage_backed;
+///
+/// let (producer, consumer) = new_hugepage_backed::<u64, 1024>();
+/// let _ = producer.push(1);
+/// let _ = consumer.pop();
+/// ```
 pub fn new_hugepage_backed<T, const CAPACITY: usize>() -> (
     Producer<T, CAPACITY, impl Allocation<T>>,
     Consumer<T, CAPACITY, impl Allocation<T>>,
@@ -355,9 +393,9 @@ mod tests_loom {
             let (producer, consumer) = new::<i32, 4>();
 
             let t1 = loom::thread::spawn(move || {
-                producer.push(1);
-                producer.push(2);
-                producer.push(3);
+                let _ = producer.push(1);
+                let _ = producer.push(2);
+                let _ = producer.push(3);
             });
 
             let t2 = loom::thread::spawn(move || {
@@ -454,11 +492,11 @@ mod tests_loom {
             let producer = Arc::new(producer);
             let p1 = producer.clone();
             let t1 = loom::thread::spawn(move || {
-                p1.push(1);
+                let _ = p1.push(1);
             });
             let p2 = producer.clone();
             let t2 = loom::thread::spawn(move || {
-                p2.push(2);
+                let _ = p2.push(2);
             });
             t1.join().unwrap();
             t2.join().unwrap();
@@ -474,11 +512,11 @@ mod tests_loom {
             let consumer = Arc::new(consumer);
             let c1 = consumer.clone();
             let t1 = loom::thread::spawn(move || {
-                c1.pop();
+                let _ = c1.pop();
             });
             let c2 = consumer.clone();
             let t2 = loom::thread::spawn(move || {
-                c2.pop();
+                let _ = c2.pop();
             });
             t1.join().unwrap();
             t2.join().unwrap();

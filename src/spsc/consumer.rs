@@ -12,11 +12,29 @@ pub(super) struct ConsumerState {
     pub cached_tail: Cell<usize>,
 }
 
+/// The popping handle of an SPSC FIFO queue.
+///
+/// Created together with its paired [`Producer`](crate::spsc::Producer) by
+/// [`new`](crate::spsc::new) (or [`new_hugepage_backed`](crate::spsc::new_hugepage_backed)).
+/// `Consumer` is [`Send`] but not [`Sync`]: at most one thread may pop at a
+/// time.
 pub struct Consumer<T, const CAPACITY: usize, AllocT: Allocation<T>> {
     inner: Arc<Queue<T, CAPACITY, AllocT>>,
     _not_sync: PhantomData<*const ()>,
 }
 
+impl<T, const CAPACITY: usize, AllocT: Allocation<T>> std::fmt::Debug
+    for Consumer<T, CAPACITY, AllocT>
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Consumer")
+            .field("capacity", &CAPACITY)
+            .finish_non_exhaustive()
+    }
+}
+
+// SAFETY: Consumer is Send because the underlying Queue is Send when both T
+// and the allocation are Send; PhantomData<*const ()> blocks Sync.
 unsafe impl<T: Send, const CAPACITY: usize, AllocT: Allocation<T> + Send> Send
     for Consumer<T, CAPACITY, AllocT>
 {
@@ -30,7 +48,23 @@ impl<T, const CAPACITY: usize, AllocT: Allocation<T>> Consumer<T, CAPACITY, Allo
         }
     }
 
+    /// Pops the next item from the queue.
+    ///
+    /// Wait-free. Returns `Some(item)` on success, `None` if the queue is
+    /// currently empty.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use low_latency_data_structures::spsc::new;
+    ///
+    /// let (producer, consumer) = new::<u64, 4>();
+    /// assert_eq!(consumer.pop(), None);
+    /// let _ = producer.push(42);
+    /// assert_eq!(consumer.pop(), Some(42));
+    /// ```
     #[inline]
+    #[must_use = "ignoring the popped item silently drops it"]
     pub fn pop(&self) -> Option<T> {
         self.inner.pop()
     }

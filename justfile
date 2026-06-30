@@ -206,16 +206,34 @@ test-basic *ARGS:
         echo "{{ style("warning") }}[WARN]{{ NORMAL }} Your system doesn't have hugepages to run tests_hugepage"; \
     fi
 
-# Run loom tests (requires loom shim)
+# Run loom tests (requires loom shim). Doc-tests are excluded because they
+# touch the shim outside of a `loom::model` block, which loom forbids.
 [group("Tests")]
 test-loom:
-    @cargo test --no-default-features --features tests_loom
+    @cargo test --no-default-features --features tests_loom --lib --tests
 
 # Run dhat tests (requires dhat global allocator)
 [group("Tests")]
 test-dhat:
     @# dhat tests should run sequentially as they affect each other through heapstats
     @cargo test --no-default-features --features tests_dhat -- --test-threads=1
+
+# Run doc-tests
+[group("Tests")]
+test-doc:
+    @cargo test --no-default-features --doc
+
+# Build rustdoc and fail on any warning (broken intra-doc link, missing docs).
+[group("Tests")]
+doc-check:
+    @RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --no-default-features
+
+# Build every example, including the bench utilities, to make sure they all
+# compile. Bench examples need the internal `_bench_utils` feature.
+[group("Tests")]
+examples-build:
+    @cargo build --examples
+    @cargo build --features _bench_utils --examples
 
 [group("Benches")]
 view-bench-report:
@@ -267,20 +285,20 @@ bench-spsc-micro:
 # Handoff benchmark. Measures latency from the push to the pop of the item.
 [group("Benches: SPSC")]
 bench-spsc-handoff cores:
-    sudo bash -c "ulimit -l 32000 && cargo build --release --example spsc_bench_handoff && taskset -c {{ cores }} cargo run --release --example spsc_bench_handoff"
+    sudo bash -c "ulimit -l 32000 && cargo build --release --features _bench_utils --example spsc_bench_handoff && taskset -c {{ cores }} cargo run --release --features _bench_utils --example spsc_bench_handoff"
 
 # Throttled-producer offered-load sweep with coordinated-omission correction.
 # Pass env through sudo: `BENCH_DEBUG=1 just bench-spsc-throttled 7,8` works
 # because justfile recipes inherit env, then `sudo -E` forwards it.
 [group("Benches: SPSC")]
 bench-spsc-throttled cores:
-    sudo -E bash -c "ulimit -l 32000 && cargo build --release --example spsc_bench_throttled && taskset -c {{ cores }} cargo run --release --example spsc_bench_throttled"
+    sudo -E bash -c "ulimit -l 32000 && cargo build --release --features _bench_utils --example spsc_bench_throttled && taskset -c {{ cores }} cargo run --release --features _bench_utils --example spsc_bench_throttled"
 
 # Cold-cache single-thread drain sweep. Compares regular vs hugepage allocator
 # across capacities to surface dTLB / cache effects. Needs hugepages enabled.
 [group("Benches: SPSC")]
 bench-spsc-drain core:
-    sudo -E bash -c "ulimit -l unlimited && cargo build --release --example spsc_bench_drain && taskset -c {{ core }} cargo run --release --example spsc_bench_drain"
+    sudo -E bash -c "ulimit -l unlimited && cargo build --release --features _bench_utils --example spsc_bench_drain && taskset -c {{ core }} cargo run --release --features _bench_utils --example spsc_bench_drain"
 
 # Benches only very tiny single-threaded deterministic flow
 [group("Benches: SeqLock")]
@@ -290,7 +308,7 @@ bench-seqlock-micro:
 # Handoff benchmark. Measures latency from the write to the read of the item.
 [group("Benches: SeqLock")]
 bench-seqlock-handoff cores:
-    sudo bash -c "ulimit -l 32000 && cargo build --release --example seqlock_bench_handoff && taskset -c {{ cores }} cargo run --release --example seqlock_bench_handoff"
+    sudo bash -c "ulimit -l 32000 && cargo build --release --features _bench_utils --example seqlock_bench_handoff && taskset -c {{ cores }} cargo run --release --features _bench_utils --example seqlock_bench_handoff"
 
 # Benches only very tiny single-threaded deterministic flow
 [group("Benches: SPMC")]
@@ -300,18 +318,18 @@ bench-spmc-micro:
 # Handoff benchmark. Measures latency from the push to the pop of the item.
 [group("Benches: SPMC")]
 bench-spmc-handoff cores:
-    sudo bash -c "ulimit -l 32000 && cargo build --release --example spmc_bench_handoff && taskset -c {{ cores }} cargo run --release --example spmc_bench_handoff"
+    sudo bash -c "ulimit -l 32000 && cargo build --release --features _bench_utils --example spmc_bench_handoff && taskset -c {{ cores }} cargo run --release --features _bench_utils --example spmc_bench_handoff"
 
 # Lapped recovery latency. Producer runs flat out, consumer adds a per-read
 # delay (sweep via BENCH_DELAYS=...). Reports value latency, recovery cycles
 # from Lapped to next Value, and skipped-count distribution.
 [group("Benches: SPMC")]
 bench-spmc-lapped cores:
-    sudo -E bash -c "ulimit -l 32000 && cargo build --release --example spmc_bench_lapped && taskset -c {{ cores }} cargo run --release --example spmc_bench_lapped"
+    sudo -E bash -c "ulimit -l 32000 && cargo build --release --features _bench_utils --example spmc_bench_lapped && taskset -c {{ cores }} cargo run --release --features _bench_utils --example spmc_bench_lapped"
 
 # Capacity sweep with a sustained producer. Single consumer reads as fast as
 # it can. Reports value latency and lap count per capacity, useful for
 # arguing about slot padding.
 [group("Benches: SPMC")]
 bench-spmc-capacity-sweep cores:
-    sudo bash -c "ulimit -l 32000 && cargo build --release --example spmc_bench_capacity_sweep && taskset -c {{ cores }} cargo run --release --example spmc_bench_capacity_sweep"
+    sudo bash -c "ulimit -l 32000 && cargo build --release --features _bench_utils --example spmc_bench_capacity_sweep && taskset -c {{ cores }} cargo run --release --features _bench_utils --example spmc_bench_capacity_sweep"
