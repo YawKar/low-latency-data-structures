@@ -273,8 +273,11 @@ test-loom:
 # Run dhat tests (requires dhat global allocator)
 [group("Tests")]
 test-dhat:
-    @# dhat tests should run sequentially as they affect each other through heapstats
-    @cargo test --no-default-features --features tests_dhat -- --test-threads=1
+    @# dhat tests must run sequentially: HeapStats is process-global.
+    @# --release: dhat measures what production sees. Debug builds add
+    @# slow-path stubs (overflow panics, format helpers) that may lazily
+    @# allocate inside the hot loop and confuse the assertion.
+    @cargo test --release --no-default-features --features tests_dhat -- --test-threads=1
 
 # Run doc-tests
 [group("Tests")]
