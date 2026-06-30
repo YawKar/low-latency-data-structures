@@ -60,6 +60,64 @@ build-release: (build "release")
 [group("Packaging")]
 build-debug: (build "")
 
+# Rehearse `cargo publish` without uploading (runs the sandboxed build crates.io will run server-side).
+[group("Packaging")]
+publish-dry-run:
+    cargo publish --dry-run
+
+# Publish to crates.io, then tag and push vX.Y.Z. Refuses if the working tree is dirty, the tag already exists, or the version is already on crates.io.
+[group("Packaging")]
+publish:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    # --- extract crate name + version from Cargo.toml via cargo pkgid ---
+    pkgid=$(cargo pkgid)
+    remainder="${pkgid##*#}"
+    case "$remainder" in
+        *@*) name="${remainder%@*}"; version="${remainder##*@}" ;;
+        *)   version="$remainder"; before="${pkgid%#*}"; name="${before##*/}" ;;
+    esac
+    tag="v$version"
+
+    # --- pre-flight: clean working tree ---
+    if [ -n "$(git status --porcelain)" ]; then
+        echo "ERROR: working tree is dirty. Commit (or stash) everything first so" >&2
+        echo "       the release tag points at a meaningful commit." >&2
+        exit 1
+    fi
+
+    # --- pre-flight: tag must not already exist locally ---
+    if git rev-parse -q --verify "refs/tags/$tag" >/dev/null 2>&1; then
+        echo "ERROR: local git tag $tag already exists." >&2
+        echo "       Bump the version in Cargo.toml, or delete the stale tag with: git tag -d $tag" >&2
+        exit 1
+    fi
+
+    # --- pre-flight: version must not already be on crates.io ---
+    echo "checking crates.io for $name v$version..."
+    status=$(curl -sS -A "just-publish ($name; https://github.com/YawKar/low-latency-data-structures)" \
+        -o /dev/null -w '%{http_code}' \
+        "https://crates.io/api/v1/crates/$name/$version" || echo 000)
+    if [ "$status" = "200" ]; then
+        echo "ERROR: $name v$version is already published on crates.io." >&2
+        echo "       Bump the version in Cargo.toml (reconsider semver first) and retry." >&2
+        exit 1
+    elif [ "$status" != "404" ]; then
+        echo "WARN: crates.io returned HTTP $status for the version probe; proceeding anyway." >&2
+    fi
+
+    # --- publish (irreversible from here onwards) ---
+    echo "publishing $name v$version to crates.io..."
+    cargo publish
+
+    # --- tag and push ---
+    echo "tagging $tag and pushing to origin..."
+    git tag -a "$tag" -m "$tag"
+    git push origin "$tag"
+
+    echo "done: $name v$version published, tag $tag pushed."
+
 [group("Debug & Profiling")]
 heaptrack-release binary:
     RUSTFLAGS="-C force-frame-pointers=yes" cargo build --release --bin {{ binary }}
