@@ -21,9 +21,12 @@
 //! # Quick start
 //!
 //! ```
-//! use low_latency_data_structures::spmc::{new, ReadResult};
+//! use low_latency_data_structures::spmc::{self, new, ReadResult};
+//! use low_latency_data_structures::mem::global::GlobalAllocator;
 //!
-//! let (producer, [mut consumer]) = new::<u64, 1024, 1>();
+//! let (producer, [mut consumer]) = new::<u64, 1024, 1, GlobalAllocator>(
+//!     spmc::Options::global_mlocked(),
+//! );
 //! producer.publish(42);
 //! assert_eq!(consumer.try_read(), ReadResult::Value(42));
 //! ```
@@ -47,9 +50,10 @@
 #[cfg(feature = "_bench_utils")]
 #[doc(hidden)]
 pub mod bench;
-mod mem;
+pub mod mem;
 pub mod seqlock;
 mod shim;
+#[cfg(not(feature = "tests_loom"))]
 pub mod spmc;
 pub mod spsc;
 

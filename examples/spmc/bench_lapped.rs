@@ -45,7 +45,8 @@ use std::{env, thread};
 use hdrhistogram::Histogram;
 use low_latency_data_structures::bench::tsc::{calibrate_hz, rdtscp};
 use low_latency_data_structures::bench::{fmt, loc, preflight};
-use low_latency_data_structures::spmc::{ReadResult, new};
+use low_latency_data_structures::mem::global::GlobalAllocator;
+use low_latency_data_structures::spmc::{Options, ReadResult, new};
 
 fn preflight(used_cores: &[usize]) {
     let mut r = preflight::PreflightReport::default();
@@ -86,7 +87,8 @@ fn measure(
     producer_core: core_affinity::CoreId,
     consumer_core: core_affinity::CoreId,
 ) -> Out {
-    let (producer, [mut consumer]) = new::<u64, CAPACITY, 1>();
+    let (producer, [mut consumer]) =
+        new::<u64, CAPACITY, 1, GlobalAllocator>(Options::global_mlocked());
     let barrier = Arc::new(Barrier::new(3));
     let done = Arc::new(AtomicBool::new(false));
 

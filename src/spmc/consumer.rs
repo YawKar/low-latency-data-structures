@@ -2,7 +2,8 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 use std::sync::atomic::{Ordering, fence};
 
-use crate::spmc::queue::Queue;
+use crate::mem::Allocation;
+use crate::spmc::queue::{Queue, Slot};
 
 #[repr(C, align(128))]
 pub(super) struct ConsumerState {
@@ -42,13 +43,16 @@ pub enum ReadResult<T> {
 /// `Consumer` is [`Send`] but not [`Sync`]: at most one thread may call
 /// [`try_read`](Self::try_read) on a given consumer at a time. To get more
 /// consumers, request more at construction via [`new`](crate::spmc::new).
-pub struct Consumer<T: bytemuck::AnyBitPattern, const CAPACITY: usize> {
+pub struct Consumer<T: bytemuck::AnyBitPattern, const CAPACITY: usize, AllocT: Allocation<Slot<T>>>
+{
     state: ConsumerState,
-    inner: Arc<Queue<T, CAPACITY>>,
+    inner: Arc<Queue<T, CAPACITY, AllocT>>,
     _not_sync: PhantomData<*const ()>,
 }
 
-impl<T: bytemuck::AnyBitPattern, const CAPACITY: usize> std::fmt::Debug for Consumer<T, CAPACITY> {
+impl<T: bytemuck::AnyBitPattern, const CAPACITY: usize, AllocT: Allocation<Slot<T>>> std::fmt::Debug
+    for Consumer<T, CAPACITY, AllocT>
+{
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Consumer")
             .field("read_cursor", &self.state.read_cursor)
@@ -58,16 +62,26 @@ impl<T: bytemuck::AnyBitPattern, const CAPACITY: usize> std::fmt::Debug for Cons
 }
 
 // SAFETY: It is Send on its own but we need to forbid the Sync.
-unsafe impl<T: bytemuck::AnyBitPattern, const CAPACITY: usize> Send for Consumer<T, CAPACITY> {}
+unsafe impl<T: bytemuck::AnyBitPattern, const CAPACITY: usize, AllocT: Allocation<Slot<T>>> Send
+    for Consumer<T, CAPACITY, AllocT>
+{
+}
 
-static_assertions::assert_impl_all!(Consumer<u32, 2>: Send);
-static_assertions::assert_not_impl_any!(Consumer<u32, 2>: Sync, Clone, Copy);
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::mem::test_util::NeverAlloc;
 
-impl<T, const CAPACITY: usize> Consumer<T, CAPACITY>
+    static_assertions::assert_impl_all!(Consumer<u32, 2, NeverAlloc>: Send);
+    static_assertions::assert_not_impl_any!(Consumer<u32, 2, NeverAlloc>: Sync, Clone, Copy);
+}
+
+impl<T, const CAPACITY: usize, AllocT> Consumer<T, CAPACITY, AllocT>
 where
     T: bytemuck::AnyBitPattern,
+    AllocT: Allocation<Slot<T>>,
 {
-    pub(super) fn new(queue: Arc<Queue<T, CAPACITY>>) -> Self {
+    pub(super) fn new(queue: Arc<Queue<T, CAPACITY, AllocT>>) -> Self {
         Self {
             state: ConsumerState {
                 read_cursor: 0,
@@ -101,9 +115,12 @@ where
     /// # Examples
     ///
     /// ```
-    /// use low_latency_data_structures::spmc::{ReadResult, new};
+    /// use low_latency_data_structures::spmc::{self, ReadResult, new};
+    /// use low_latency_data_structures::mem::global::GlobalAllocator;
     ///
-    /// let (producer, [mut consumer]) = new::<u64, 16, 1>();
+    /// let (producer, [mut consumer]) = new::<u64, 16, 1, GlobalAllocator>(
+    ///     spmc::Options::global_mlocked(),
+    /// );
     /// assert_eq!(consumer.try_read(), ReadResult::Empty);
     /// producer.publish(7);
     /// assert_eq!(consumer.try_read(), ReadResult::Value(7));
@@ -116,12 +133,7 @@ where
                 return ReadResult::Empty;
             }
         }
-        // SAFETY: it is guaranteed at compile-time that slots has exactly CAPACITY items
-        let slot = unsafe {
-            self.inner
-                .slots
-                .get_unchecked(self.state.read_cursor & (CAPACITY - 1))
-        };
+        let slot = self.slot(self.state.read_cursor);
         // That's the expected seq_no after producer has written the item
         let expected_seq = self.state.read_cursor.wrapping_mul(2).wrapping_add(2);
         loop {
@@ -169,5 +181,32 @@ where
             .write_cursor
             .load(Ordering::Acquire);
         self.state.read_cursor == self.state.cached_write_cursor
+    }
+
+    /// Wraps the given `i` around `CAPACITY - 1`.
+    ///
+    /// # Safety
+    ///
+    /// - The masked index is always in `[0, CAPACITY)`, so the derived
+    ///   pointer stays inside the allocation.
+    /// - The allocation is aligned and dereferenceable per the `Allocator`
+    ///   contract.
+    /// - Every slot is initialized in [`new`](super::new) before the
+    ///   `Queue` is wrapped in `Arc`, so `assume_init_ref` is sound.
+    /// - Returning `&Slot<T>` while another thread mutates through
+    ///   `slot.data` / `slot.seq` is legal because the mutable state sits
+    ///   behind `UnsafeCell` and atomics.
+    #[inline(always)]
+    fn slot(&self, i: usize) -> &Slot<T> {
+        unsafe {
+            self.inner
+                .slots
+                .ptr()
+                .wrapping_add(i & (CAPACITY - 1))
+                .as_ref_unchecked()
+                .get()
+                .as_ref_unchecked()
+                .assume_init_ref()
+        }
     }
 }

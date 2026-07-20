@@ -60,6 +60,7 @@ quanta = "0.12.6"
 seq-macro = "0.3.6"
 duplicate = "2.0.1"
 bytemuck = "1.25.0"
+bon = "3.9.3"
 
 [dev-dependencies]
 criterion = { version = "0.8.2", features = ["html_reports"] }

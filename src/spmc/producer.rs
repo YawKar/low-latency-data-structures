@@ -2,7 +2,8 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 
-use crate::spmc::queue::Queue;
+use crate::mem::Allocation;
+use crate::spmc::queue::{Queue, Slot};
 
 #[repr(C, align(128))]
 pub(super) struct ProducerState {
@@ -20,12 +21,15 @@ pub(super) struct ProducerState {
 /// oldest slot is overwritten, and any consumer that hasn't read past that
 /// slot will observe a [`ReadResult::Lapped`](crate::spmc::ReadResult::Lapped)
 /// on its next read.
-pub struct Producer<T: bytemuck::AnyBitPattern, const CAPACITY: usize> {
-    inner: Arc<Queue<T, CAPACITY>>,
+pub struct Producer<T: bytemuck::AnyBitPattern, const CAPACITY: usize, AllocT: Allocation<Slot<T>>>
+{
+    inner: Arc<Queue<T, CAPACITY, AllocT>>,
     _not_sync: PhantomData<*const ()>,
 }
 
-impl<T: bytemuck::AnyBitPattern, const CAPACITY: usize> std::fmt::Debug for Producer<T, CAPACITY> {
+impl<T: bytemuck::AnyBitPattern, const CAPACITY: usize, AllocT: Allocation<Slot<T>>> std::fmt::Debug
+    for Producer<T, CAPACITY, AllocT>
+{
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Producer")
             .field("capacity", &CAPACITY)
@@ -34,16 +38,26 @@ impl<T: bytemuck::AnyBitPattern, const CAPACITY: usize> std::fmt::Debug for Prod
 }
 
 // SAFETY: it is Send on its own but we need to restrict only Sync.
-unsafe impl<T: bytemuck::AnyBitPattern, const CAPACITY: usize> Send for Producer<T, CAPACITY> {}
+unsafe impl<T: bytemuck::AnyBitPattern, const CAPACITY: usize, AllocT: Allocation<Slot<T>>> Send
+    for Producer<T, CAPACITY, AllocT>
+{
+}
 
-static_assertions::assert_impl_all!(Producer<u32, 1>: Send);
-static_assertions::assert_not_impl_any!(Producer<u32, 1>: Sync, Clone, Copy);
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::mem::test_util::NeverAlloc;
 
-impl<T, const CAPACITY: usize> Producer<T, CAPACITY>
+    static_assertions::assert_impl_all!(Producer<u32, 1, NeverAlloc>: Send);
+    static_assertions::assert_not_impl_any!(Producer<u32, 1, NeverAlloc>: Sync, Clone, Copy);
+}
+
+impl<T, const CAPACITY: usize, AllocT> Producer<T, CAPACITY, AllocT>
 where
     T: bytemuck::AnyBitPattern,
+    AllocT: Allocation<Slot<T>>,
 {
-    pub(super) fn new(queue: Arc<Queue<T, CAPACITY>>) -> Self {
+    pub(super) fn new(queue: Arc<Queue<T, CAPACITY, AllocT>>) -> Self {
         Self {
             inner: queue,
             _not_sync: PhantomData,
@@ -60,9 +74,12 @@ where
     /// # Examples
     ///
     /// ```
-    /// use low_latency_data_structures::spmc::{ReadResult, new};
+    /// use low_latency_data_structures::spmc::{self, ReadResult, new};
+    /// use low_latency_data_structures::mem::global::GlobalAllocator;
     ///
-    /// let (producer, [mut consumer]) = new::<u64, 16, 1>();
+    /// let (producer, [mut consumer]) = new::<u64, 16, 1, GlobalAllocator>(
+    ///     spmc::Options::global_mlocked(),
+    /// );
     /// producer.publish(42);
     /// assert_eq!(consumer.try_read(), ReadResult::Value(42));
     /// ```

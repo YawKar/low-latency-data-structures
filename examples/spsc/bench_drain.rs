@@ -51,7 +51,11 @@ use std::time::Duration;
 use duplicate::duplicate;
 use low_latency_data_structures::bench::tsc::{calibrate_hz, rdtscp};
 use low_latency_data_structures::bench::{fmt, loc, preflight};
-use low_latency_data_structures::spsc::{new, new_hugepage_backed};
+use low_latency_data_structures::mem::global::GlobalAllocator;
+use low_latency_data_structures::mem::hugepages::{
+    HugepageAllocator, HugepageAllocatorOptions, HugepageSize,
+};
+use low_latency_data_structures::spsc::{Options, new};
 
 /// One cache line per item. See module docs for why this matters.
 type Item = [u64; 8];
@@ -187,10 +191,32 @@ fn main() {
             let bytes = CAPACITY * size_of::<Item>();
 
             let reg_ns: Vec<u64> = (0..TRIALS)
-                .map(|_| drain_trial!(CAPACITY, &mut flush, tsc_hz, new::<Item, CAPACITY>()))
+                .map(|_| {
+                    drain_trial!(
+                        CAPACITY,
+                        &mut flush,
+                        tsc_hz,
+                        new::<Item, CAPACITY, GlobalAllocator>(Options::global_mlocked())
+                    )
+                })
                 .collect();
             let huge_ns: Vec<u64> = (0..TRIALS)
-                .map(|_| drain_trial!(CAPACITY, &mut flush, tsc_hz, new_hugepage_backed::<Item, CAPACITY>()))
+                .map(|_| {
+                    let hp_opts = Options::builder()
+                        .alloc(
+                            HugepageAllocatorOptions::builder()
+                                .mlock(true)
+                                .hugepage_size(HugepageSize::H2MB)
+                                .build(),
+                        )
+                        .build();
+                    drain_trial!(
+                        CAPACITY,
+                        &mut flush,
+                        tsc_hz,
+                        new::<Item, CAPACITY, HugepageAllocator>(hp_opts)
+                    )
+                })
                 .collect();
 
             let reg = median(reg_ns);

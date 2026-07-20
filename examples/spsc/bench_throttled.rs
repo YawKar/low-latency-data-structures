@@ -47,7 +47,8 @@ use std::{env, thread};
 use hdrhistogram::Histogram;
 use low_latency_data_structures::bench::tsc::{calibrate_hz, rdtscp};
 use low_latency_data_structures::bench::{fmt, loc, preflight};
-use low_latency_data_structures::spsc::new;
+use low_latency_data_structures::mem::global::GlobalAllocator;
+use low_latency_data_structures::spsc::{Options, new};
 
 /// Item the producer hands off. 16 bytes -- fits in half a cache line.
 /// `schedule_tsc` is the deadline (CO-corrected reference frame).
@@ -98,7 +99,7 @@ fn measure_at_rate(
     consumer_core: core_affinity::CoreId,
     capture_sys: bool,
 ) -> RateResult {
-    let (producer, consumer) = new::<Stamped, CAPACITY>();
+    let (producer, consumer) = new::<Stamped, CAPACITY, GlobalAllocator>(Options::global_mlocked());
     let barrier = Arc::new(Barrier::new(3));
     let done = Arc::new(AtomicBool::new(false));
 
