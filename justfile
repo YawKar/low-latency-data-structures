@@ -13,8 +13,9 @@ init:
     cargo install cargo-run-bin
     cargo bin -i
     cargo install cargo-show-asm
-    cargo check --all-targets --features tests_loom
+    cargo check --all-targets --no-default-features
     cargo check --all-targets --features tests_basic
+    cargo check --tests --no-default-features --features tests_loom
 [group("Bootstrap")]
 enable-hugepages:
     sudo sysctl -w vm.nr_hugepages=64
@@ -268,7 +269,7 @@ test-basic *ARGS:
 # touch the shim outside of a `loom::model` block, which loom forbids.
 [group("Tests")]
 test-loom:
-    @cargo test --no-default-features --features tests_loom --lib --tests
+    @cargo test --no-default-features --features tests_loom --tests
 
 # Run dhat tests (requires dhat global allocator)
 [group("Tests")]

@@ -36,15 +36,19 @@ low-latency-data-structures = "=0.0.1"
 ```
 
 ```rust
+use low_latency_data_structures::mem::global::GlobalAllocator;
+
 // SPSC
 use low_latency_data_structures::spsc;
-let (producer, consumer) = spsc::new::<u64, 1024>();
+let (producer, consumer) =
+    spsc::new::<u64, 1024, GlobalAllocator>(spsc::Options::global_mlocked());
 assert!(producer.push(42).is_none());
 assert_eq!(consumer.pop(), Some(42));
 
 // SPMC broadcast
 use low_latency_data_structures::spmc::{self, ReadResult};
-let (producer, [mut c1, mut c2]) = spmc::new::<u64, 1024, 2>();
+let (producer, [mut c1, mut c2]) =
+    spmc::new::<u64, 1024, 2, GlobalAllocator>(spmc::Options::global_mlocked());
 producer.publish(42);
 assert_eq!(c1.try_read(), ReadResult::Value(42));
 assert_eq!(c2.try_read(), ReadResult::Value(42));
@@ -55,6 +59,15 @@ let (writer, reader) = seqlock::new(0u64);
 writer.write(42);
 assert_eq!(reader.read(), 42);
 ```
+
+The `Options` argument selects the backing allocator (currently
+[`GlobalAllocator`] or [`HugepageAllocator`]) and per-allocator settings
+like `mlock`. `Options::global_mlocked()` is a shorthand for the common
+"global allocator, mlocked" case; use `Options::builder()` for anything
+else.
+
+[`GlobalAllocator`]: https://docs.rs/low-latency-data-structures/latest/low_latency_data_structures/mem/global/struct.GlobalAllocator.html
+[`HugepageAllocator`]: https://docs.rs/low-latency-data-structures/latest/low_latency_data_structures/mem/hugepages/struct.HugepageAllocator.html
 
 Three runnable hello-world examples ship in `examples/`:
 

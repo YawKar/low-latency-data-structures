@@ -1,7 +1,11 @@
-use std::cell::UnsafeCell;
+use std::marker::PhantomData;
+use std::mem::MaybeUninit;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering, fence};
 
+use crate::mem::{Allocation, Allocator};
+use crate::shim::cell::UnsafeCell;
+use crate::spmc::builder::Options;
 use crate::spmc::consumer::Consumer;
 use crate::spmc::producer::{Producer, ProducerState};
 
@@ -17,9 +21,12 @@ use crate::spmc::producer::{Producer, ProducerState};
 /// # Examples
 ///
 /// ```
-/// use low_latency_data_structures::spmc::{ReadResult, new};
+/// use low_latency_data_structures::spmc::{self, ReadResult, new};
+/// use low_latency_data_structures::mem::global::GlobalAllocator;
 ///
-/// let (producer, [mut a, mut b]) = new::<u64, 4, 2>();
+/// let (producer, [mut a, mut b]) = new::<u64, 4, 2, GlobalAllocator>(
+///     spmc::Options::global_mlocked(),
+/// );
 /// producer.publish(1);
 /// assert_eq!(a.try_read(), ReadResult::Value(1));
 /// assert_eq!(b.try_read(), ReadResult::Value(1));
@@ -28,18 +35,27 @@ use crate::spmc::producer::{Producer, ProducerState};
 /// Capacities that are not powers of two fail to compile:
 ///
 /// ```compile_fail
-/// # use low_latency_data_structures::spmc::new;
+/// # use low_latency_data_structures::spmc::{self, new};
+/// # use low_latency_data_structures::mem::global::GlobalAllocator;
 /// # use seq_macro::seq;
 /// seq!(N in 2..20 {
 ///     {
 ///         const CAP: usize = 2usize.wrapping_pow(N);
-///         let _fail = new::<u64, { CAP - 1 }, 3>();
-///         let _fail = new::<u64, { CAP + 1 }, 4>();
+///         let _fail = new::<u64, { CAP - 1 }, 3, GlobalAllocator>(
+///             spmc::Options::global_mlocked(),
+///         );
+///         let _fail = new::<u64, { CAP + 1 }, 4, GlobalAllocator>(
+///             spmc::Options::global_mlocked(),
+///         );
 ///     }
 /// });
 /// ```
-pub fn new<T, const CAPACITY: usize, const NCONSUMERS: usize>()
--> (Producer<T, CAPACITY>, [Consumer<T, CAPACITY>; NCONSUMERS])
+pub fn new<T, const CAPACITY: usize, const NCONSUMERS: usize, Alloc: Allocator>(
+    options: Options<Alloc>,
+) -> (
+    Producer<T, CAPACITY, impl Allocation<Slot<T>>>,
+    [Consumer<T, CAPACITY, impl Allocation<Slot<T>>>; NCONSUMERS],
+)
 where
     T: bytemuck::AnyBitPattern,
 {
@@ -49,50 +65,77 @@ where
             "Given capacity is not a power of two",
         );
     }
+    let slots = Alloc::allocate::<Slot<T>>(CAPACITY, options.alloc);
+    // Initialize every slot before any producer/consumer can touch it. The
+    // seqlock protocol assumes `seq` starts at an even value (0); without
+    // this loop, an allocator that returns garbage (e.g. GlobalAllocator on
+    // arenas with reused memory) can cause the first read to see a bogus
+    // matching `seq` and hand back uninitialized `T`.
+    for ix in 0..CAPACITY {
+        // SAFETY: `ix < CAPACITY`, so the derived pointer is inside the
+        // allocation returned by `Alloc::allocate` and is aligned and
+        // dereferenceable per the `Allocator` contract.
+        let slot = unsafe { slots.ptr().wrapping_add(ix).as_mut_unchecked() };
+        // SAFETY: `slot.get()` returns a `*mut MaybeUninit<Slot<T>>` into
+        // uninitialized memory that no one else observes yet, so the write
+        // does not overlap any live reference.
+        unsafe {
+            slot.get().write(MaybeUninit::new(Slot {
+                seq: AtomicUsize::new(0),
+                data: UnsafeCell::new(T::zeroed()),
+            }));
+        }
+    }
     let q = Arc::new(Queue {
         producer_state: ProducerState {
             write_cursor: AtomicUsize::new(0),
         },
-        slots: std::array::from_fn(|_| Slot {
-            seq: AtomicUsize::new(0),
-            data: UnsafeCell::new(T::zeroed()),
-        }),
+        slots,
+        _t: PhantomData,
     });
     let producer = Producer::new(q.clone());
     let consumers = std::array::from_fn(|_| Consumer::new(q.clone()));
     (producer, consumers)
 }
 
-pub(super) struct Slot<T: bytemuck::AnyBitPattern> {
+/// One cell in the SPMC ring. Carries the payload plus a sequence number the
+/// seqlock protocol uses to detect torn or lapped reads.
+///
+/// Exposed only so callers can name the [`Allocation<Slot<T>>`](Allocation)
+/// bound when writing generic helpers over the queue; there are no methods
+/// intended for direct use.
+pub struct Slot<T: bytemuck::AnyBitPattern> {
     pub(super) seq: AtomicUsize,
     pub(super) data: UnsafeCell<T>,
 }
 
-pub(super) struct Queue<T, const CAPACITY: usize>
+pub(super) struct Queue<T, const CAPACITY: usize, AllocT: Allocation<Slot<T>>>
 where
     T: bytemuck::AnyBitPattern,
 {
     pub(super) producer_state: ProducerState,
-    pub(super) slots: [Slot<T>; CAPACITY],
+    pub(super) slots: AllocT,
+    pub(super) _t: PhantomData<T>,
 }
 
 // SAFETY: Queue uses Slot<T> which is !Sync because of UnsafeCell, but the queue itself can only be
 // used through publish/Consumer APIs both of which synchronize themselves using seqlock seq.
-unsafe impl<T: bytemuck::AnyBitPattern, const CAPACITY: usize> Sync for Queue<T, CAPACITY> {}
+unsafe impl<T: bytemuck::AnyBitPattern, const CAPACITY: usize, AllocT: Allocation<Slot<T>>> Sync
+    for Queue<T, CAPACITY, AllocT>
+{
+}
 
-static_assertions::assert_impl_all!(Queue<u32, 1>: Sync, Send);
-
-impl<T, const CAPACITY: usize> Queue<T, CAPACITY>
+impl<T, const CAPACITY: usize, AllocT> Queue<T, CAPACITY, AllocT>
 where
     T: bytemuck::AnyBitPattern,
+    AllocT: Allocation<Slot<T>>,
 {
     #[inline]
     pub(super) fn publish(&self, value: T) {
         let w_pos = self.producer_state.write_cursor.load(Ordering::Relaxed);
         // Used as both generation control and even-odd guarantee
         let seq_no = w_pos.wrapping_mul(2);
-        // SAFETY: slots buffer is guaranteed to be the length of CAPACITY items
-        let slot = unsafe { self.slots.get_unchecked(w_pos & (CAPACITY - 1)) };
+        let slot = self.slot(w_pos);
         slot.seq.store(seq_no.wrapping_add(1), Ordering::Relaxed);
         // ARM: prevent the subsequent write from moving above the odd seq store
         fence(Ordering::Release);
@@ -102,19 +145,68 @@ where
             .write_cursor
             .store(w_pos.wrapping_add(1), Ordering::Release);
     }
+
+    /// Wraps the given `i` around `CAPACITY - 1`.
+    ///
+    /// # Safety
+    ///
+    /// - The masked index is always in `[0, CAPACITY)`, so the derived
+    ///   pointer stays inside the allocation.
+    /// - The allocation is aligned and dereferenceable per the `Allocator`
+    ///   contract.
+    /// - Every slot is initialized in [`new`] before the `Queue` is wrapped
+    ///   in `Arc`, so `assume_init_ref` is sound.
+    /// - Returning `&Slot<T>` while another thread mutates through
+    ///   `slot.data` / `slot.seq` is legal because the mutable state sits
+    ///   behind `UnsafeCell` and atomics.
+    #[inline(always)]
+    fn slot(&self, i: usize) -> &Slot<T> {
+        unsafe {
+            self.slots
+                .ptr()
+                .wrapping_add(i & (CAPACITY - 1))
+                .as_ref_unchecked()
+                .get()
+                .as_ref_unchecked()
+                .assume_init_ref()
+        }
+    }
 }
 
 #[cfg(test)]
 #[cfg(feature = "tests_basic")]
 mod tests {
     use super::*;
+    #[cfg(not(feature = "tests_hugepage"))]
+    use crate::mem::global::GlobalAllocator;
+    #[cfg(feature = "tests_hugepage")]
+    use crate::mem::hugepages::{HugepageAllocator, HugepageAllocatorOptions, HugepageSize};
+    use crate::mem::test_util::NeverAlloc;
     use crate::spmc::consumer::ReadResult;
+
+    static_assertions::assert_impl_all!(Queue<u32, 1, NeverAlloc>: Sync, Send);
+
+    #[cfg(not(feature = "tests_hugepage"))]
+    fn spmc_options() -> Options<GlobalAllocator> {
+        Options::global_mlocked()
+    }
+    #[cfg(feature = "tests_hugepage")]
+    fn spmc_options() -> Options<HugepageAllocator> {
+        Options::builder()
+            .alloc(
+                HugepageAllocatorOptions::builder()
+                    .mlock(true)
+                    .hugepage_size(HugepageSize::H2MB)
+                    .build(),
+            )
+            .build()
+    }
 
     #[test]
     fn single_thread_multiple_consumers_read_messages() {
         const CAPACITY: usize = 128;
         const NCONSUMERS: usize = 3;
-        let (producer, consumers) = new::<u64, CAPACITY, NCONSUMERS>();
+        let (producer, consumers) = new::<u64, CAPACITY, NCONSUMERS, _>(spmc_options());
         let [mut c1, mut c2, mut c3] = consumers;
         assert_eq!(c1.try_read(), ReadResult::Empty);
         assert_eq!(c2.try_read(), ReadResult::Empty);
@@ -156,7 +248,7 @@ mod tests {
         const NCONSUMERS: usize = 4;
         const N: u64 = 200_000;
 
-        let (producer, consumers) = new::<u64, CAPACITY, NCONSUMERS>();
+        let (producer, consumers) = new::<u64, CAPACITY, NCONSUMERS, _>(spmc_options());
         let done = Arc::new(AtomicBool::new(false));
 
         let handles: Vec<_> = consumers
@@ -209,7 +301,7 @@ mod tests {
     fn consumer_can_be_overlapped_by_writer() {
         const CAPACITY: usize = 8;
         const NCONSUMERS: usize = 1;
-        let (producer, consumers) = new::<usize, CAPACITY, NCONSUMERS>();
+        let (producer, consumers) = new::<usize, CAPACITY, NCONSUMERS, _>(spmc_options());
         let [mut c1] = consumers;
         assert_eq!(c1.try_read(), ReadResult::Empty);
 

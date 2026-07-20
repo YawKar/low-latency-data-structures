@@ -1,11 +1,12 @@
 use std::marker::PhantomData;
 
-use crate::mem::{Allocation, allocate_buffer, allocate_hugepage_buffer};
+use crate::mem::{Allocation, Allocator};
 use crate::shim::sync::{Arc, atomic};
+use crate::spsc::builder::Options;
 use crate::spsc::consumer::{Consumer, ConsumerState};
 use crate::spsc::producer::{Producer, ProducerState};
 
-/// Creates a new heap-backed SPSC queue with `CAPACITY` slots.
+/// Creates a new SPSC queue with `CAPACITY` slots using the specified allocator.
 ///
 /// `CAPACITY` must be a power of two (compile-time enforced). The slot
 /// buffer is allocated up front and locked into RAM via `mlock` so the
@@ -14,9 +15,12 @@ use crate::spsc::producer::{Producer, ProducerState};
 /// # Examples
 ///
 /// ```
-/// use low_latency_data_structures::spsc::new;
+/// use low_latency_data_structures::spsc::{self, new};
+/// use low_latency_data_structures::mem::global::GlobalAllocator;
 ///
-/// let (producer, consumer) = new::<u64, 8>();
+/// let (producer, consumer) = new::<u64, 8, GlobalAllocator>(
+///     spsc::Options::global_mlocked(),
+/// );
 /// assert_eq!(producer.push(1), None);
 /// assert_eq!(consumer.pop(), Some(1));
 /// ```
@@ -24,17 +28,24 @@ use crate::spsc::producer::{Producer, ProducerState};
 /// Capacities that are not powers of two fail to compile:
 ///
 /// ```compile_fail
-/// # use low_latency_data_structures::spsc::new;
+/// use low_latency_data_structures::spsc::{self, new};
+/// use low_latency_data_structures::mem::global::GlobalAllocator;
 /// # use seq_macro::seq;
 /// seq!(N in 2..20 {
 ///     {
 ///         const CAP: usize = 2usize.wrapping_pow(N);
-///         let _fail = new::<u64, { CAP - 1 }>();
-///         let _fail = new::<u64, { CAP + 1 }>();
+///         let _fail = new::<u64, { CAP - 1 }, GlobalAllocator>(
+///             spsc::Options::global_mlocked(),
+///         );
+///         let _fail = new::<u64, { CAP + 1 }, GlobalAllocator>(
+///             spsc::Options::global_mlocked(),
+///         );
 ///     }
 /// });
 /// ```
-pub fn new<T, const CAPACITY: usize>() -> (
+pub fn new<T, const CAPACITY: usize, Alloc: Allocator>(
+    options: Options<Alloc>,
+) -> (
     Producer<T, CAPACITY, impl Allocation<T>>,
     Consumer<T, CAPACITY, impl Allocation<T>>,
 ) {
@@ -44,65 +55,10 @@ pub fn new<T, const CAPACITY: usize>() -> (
             "Given capacity is not a power of two!"
         );
     };
-    let slots_allocation = allocate_buffer::<T>(CAPACITY);
+    let slots_allocation = Alloc::allocate(CAPACITY, options.alloc);
     let q = Arc::new(Queue {
-        producer_state: ProducerState {
-            tail: Default::default(),
-            cached_head: Default::default(),
-        },
-        consumer_state: ConsumerState {
-            head: Default::default(),
-            cached_tail: Default::default(),
-        },
-        slots_allocation,
-        _t: PhantomData,
-    });
-    let producer = Producer::new(q.clone());
-    let consumer = Consumer::new(q);
-    (producer, consumer)
-}
-
-/// Creates a new SPSC queue with `CAPACITY` slots backed by 2 MiB hugepages.
-///
-/// `CAPACITY` must be a power of two (compile-time enforced). The slot
-/// buffer is allocated via `mmap` with `MAP_HUGETLB | MAP_HUGE_2MB` and
-/// `MAP_POPULATE`, then locked into RAM. Useful when the slot buffer is
-/// large enough that the regular allocation would thrash the dTLB.
-///
-/// # Panics
-///
-/// Panics if hugepages are unavailable on the system. Enable them with
-/// `sysctl -w vm.nr_hugepages=N` first.
-///
-/// # Examples
-///
-/// ```no_run
-/// use low_latency_data_structures::spsc::new_hugepage_backed;
-///
-/// let (producer, consumer) = new_hugepage_backed::<u64, 1024>();
-/// let _ = producer.push(1);
-/// let _ = consumer.pop();
-/// ```
-pub fn new_hugepage_backed<T, const CAPACITY: usize>() -> (
-    Producer<T, CAPACITY, impl Allocation<T>>,
-    Consumer<T, CAPACITY, impl Allocation<T>>,
-) {
-    const {
-        assert!(
-            CAPACITY.is_power_of_two(),
-            "Given capacity is not a power of two!"
-        );
-    };
-    let slots_allocation = allocate_hugepage_buffer(CAPACITY);
-    let q = Arc::new(Queue {
-        producer_state: ProducerState {
-            tail: Default::default(),
-            cached_head: Default::default(),
-        },
-        consumer_state: ConsumerState {
-            head: Default::default(),
-            cached_tail: Default::default(),
-        },
+        producer_state: ProducerState::default(),
+        consumer_state: ConsumerState::default(),
         slots_allocation,
         _t: PhantomData,
     });
@@ -221,15 +177,39 @@ mod tests_basic {
 
     use seq_macro::seq;
 
-    #[cfg(not(feature = "tests_hugepage"))]
     use super::new;
+    #[cfg(not(feature = "tests_hugepage"))]
+    use crate::mem::global::{GlobalAllocator, GlobalAllocatorOptions};
     #[cfg(feature = "tests_hugepage")]
-    use super::new_hugepage_backed as new;
+    use crate::mem::hugepages::{HugepageAllocator, HugepageAllocatorOptions, HugepageSize};
     use crate::shim::cell::Cell;
+    use crate::spsc::builder::Options;
+
+    #[cfg(not(feature = "tests_hugepage"))]
+    fn alloc_options() -> GlobalAllocatorOptions {
+        GlobalAllocatorOptions::builder().mlock(true).build()
+    }
+
+    #[cfg(not(feature = "tests_hugepage"))]
+    type Alloc = GlobalAllocator;
+    #[cfg(feature = "tests_hugepage")]
+    type Alloc = HugepageAllocator;
+
+    #[cfg(feature = "tests_hugepage")]
+    fn alloc_options() -> HugepageAllocatorOptions {
+        HugepageAllocatorOptions::builder()
+            .mlock(true)
+            .hugepage_size(HugepageSize::H2MB)
+            .build()
+    }
+
+    fn spsc_options() -> Options<Alloc> {
+        Options::builder().alloc(alloc_options()).build()
+    }
 
     #[test]
     fn move_producer_consumer_to_threads() {
-        let (producer, consumer) = new::<_, 2>();
+        let (producer, consumer) = new::<_, 2, Alloc>(spsc_options());
         thread::spawn(move || {
             let _ = producer.push(123);
         })
@@ -244,7 +224,7 @@ mod tests_basic {
 
     #[test]
     fn handoff_one_value() {
-        let (producer, consumer) = new::<_, 2>();
+        let (producer, consumer) = new::<_, 2, Alloc>(spsc_options());
         assert_eq!(producer.push(123), None);
         assert_eq!(consumer.pop(), Some(123));
     }
@@ -255,14 +235,14 @@ mod tests_basic {
         seq!(N in 0..6 {
             {
                 const POWER: usize = 2usize.pow(N);
-                new::<u32, POWER>();
+                new::<u32, POWER, Alloc>(spsc_options());
             }
         });
         #[cfg(not(feature = "tests_hugepage"))]
         seq!(N in 0..20 {
             {
                 const POWER: usize = 2usize.pow(N);
-                new::<u32, POWER>();
+                new::<u32, POWER, Alloc>(spsc_options());
             }
         });
     }
@@ -281,7 +261,7 @@ mod tests_basic {
             }
         }
         const CAPACITY: usize = 64;
-        let (producer, consumer) = new::<_, CAPACITY>();
+        let (producer, consumer) = new::<_, CAPACITY, Alloc>(spsc_options());
         for _ in 0..CAPACITY {
             let counter = counter.clone();
             assert_eq!(producer.push(Droppable { counter }), None);
@@ -298,14 +278,14 @@ mod tests_basic {
 
     #[test]
     fn empty_returns_none() {
-        let (_, consumer) = new::<i32, 4>();
+        let (_, consumer) = new::<i32, 4, Alloc>(spsc_options());
         assert_eq!(consumer.pop(), None);
         assert_eq!(consumer.pop(), None);
     }
 
     #[test]
     fn full_returns_item_back() {
-        let (producer, _) = new::<i32, 2>();
+        let (producer, _) = new::<i32, 2, Alloc>(spsc_options());
         assert_eq!(producer.push(1), None);
         assert_eq!(producer.push(2), None);
         // Full: item comes back untouched
@@ -315,7 +295,7 @@ mod tests_basic {
 
     #[test]
     fn fifo_ordering() -> anyhow::Result<()> {
-        let (producer, consumer) = new::<_, 8>();
+        let (producer, consumer) = new::<_, 8, Alloc>(spsc_options());
         for i in 0..8 {
             assert_eq!(producer.push(i), None);
         }
@@ -329,7 +309,7 @@ mod tests_basic {
     fn wraparound_n_laps() {
         const CAPACITY: usize = 4;
         let laps = 100;
-        let (producer, consumer) = new::<_, CAPACITY>();
+        let (producer, consumer) = new::<_, CAPACITY, Alloc>(spsc_options());
         for lap in 0..laps {
             for i in 0..CAPACITY {
                 let val = lap * CAPACITY + i;
@@ -348,7 +328,7 @@ mod tests_basic {
 
     #[test]
     fn interleaved_push_pop() {
-        let (producer, consumer) = new::<_, 2>();
+        let (producer, consumer) = new::<_, 2, Alloc>(spsc_options());
         // Push 1, pop 1, repeat: tests wraparound with tiny queue
         for i in 0..1000 {
             assert_eq!(producer.push(i), None);
@@ -358,7 +338,7 @@ mod tests_basic {
 
     #[test]
     fn capacity_one() {
-        let (producer, consumer) = new::<_, 1>();
+        let (producer, consumer) = new::<_, 1, Alloc>(spsc_options());
         assert_eq!(consumer.pop(), None);
         assert_eq!(producer.push(42), None);
         assert_eq!(producer.push(43), Some(43)); // full
@@ -369,7 +349,7 @@ mod tests_basic {
     #[test]
     fn move_only_type() {
         // Verify non-Copy, non-Clone types work
-        let (producer, consumer) = new::<_, 4>();
+        let (producer, consumer) = new::<_, 4, Alloc>(spsc_options());
         let s = String::from("hello");
         assert_eq!(producer.push(s), None);
         let got = consumer.pop().unwrap();
@@ -381,16 +361,21 @@ mod tests_basic {
 #[cfg(feature = "tests_loom")]
 mod tests_loom {
     use super::*;
+    use crate::mem::loom::{LoomVecAllocator, LoomVecAllocatorOptions};
 
     static_assertions::assert_cfg!(
         not(feature = "tests_hugepage"),
         "tests_loom incompatible with tests_hugepage as loom uses custom buffer allocator",
     );
 
+    fn spsc_options() -> Options<LoomVecAllocator> {
+        Options::builder().alloc(LoomVecAllocatorOptions).build()
+    }
+
     #[test]
     fn concurrent_push_pop() {
         loom::model(|| {
-            let (producer, consumer) = new::<i32, 4>();
+            let (producer, consumer) = new::<i32, 4, _>(spsc_options());
 
             let t1 = loom::thread::spawn(move || {
                 let _ = producer.push(1);
@@ -421,7 +406,7 @@ mod tests_loom {
     #[test]
     fn concurrent_with_full_queue() {
         loom::model(|| {
-            let (producer, consumer) = new::<i32, 1>();
+            let (producer, consumer) = new::<i32, 1, _>(spsc_options());
 
             let t1 = loom::thread::spawn(move || {
                 for i in 0..3 {
@@ -452,7 +437,7 @@ mod tests_loom {
     #[test]
     fn concurrent_no_values_lost() {
         loom::model(|| {
-            let (producer, consumer) = new::<i32, 2>();
+            let (producer, consumer) = new::<i32, 2, _>(spsc_options());
 
             let t1 = loom::thread::spawn(move || {
                 for i in 0..3 {
@@ -488,7 +473,7 @@ mod tests_loom {
     #[should_panic = "Causality violation: Concurrent write accesses to `UnsafeCell`.\n"]
     fn loom_detects_concurrent_producers() {
         loom::model(|| {
-            let (producer, _) = new::<i32, 16>();
+            let (producer, _) = new::<i32, 16, _>(spsc_options());
             let producer = Arc::new(producer);
             let p1 = producer.clone();
             let t1 = loom::thread::spawn(move || {
@@ -508,7 +493,7 @@ mod tests_loom {
     #[should_panic = "Causality violation: Concurrent read and write accesses.\n"]
     fn loom_detects_concurrent_consumers() {
         loom::model(|| {
-            let (_, consumer) = new::<i32, 16>();
+            let (_, consumer) = new::<i32, 16, _>(spsc_options());
             let consumer = Arc::new(consumer);
             let c1 = consumer.clone();
             let t1 = loom::thread::spawn(move || {
@@ -528,11 +513,12 @@ mod tests_loom {
 #[cfg(feature = "tests_dhat")]
 mod tests_dhat {
     use super::*;
+    use crate::mem::global::GlobalAllocator;
 
     #[test]
     fn hot_path_zero_allocations() {
         let _profiler = dhat::Profiler::builder().testing().build();
-        let (producer, consumer) = new::<u64, 1024>();
+        let (producer, consumer) = new::<u64, 1024, GlobalAllocator>(Options::global_mlocked());
 
         // Warm up to absorb any one-time platform allocations: lazy symbol
         // resolution in the dynamic linker, libstd TLS init, debug-build

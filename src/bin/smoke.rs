@@ -2,6 +2,9 @@
 //! primitive so a release build catches obvious regressions before the
 //! benchmark suite runs.
 
+#![cfg(not(feature = "tests_loom"))]
+
+use low_latency_data_structures::mem::global::GlobalAllocator;
 use low_latency_data_structures::spmc::{self, ReadResult};
 use low_latency_data_structures::{seqlock, spsc};
 
@@ -15,7 +18,8 @@ fn main() {
 
 fn smoke_spsc() {
     println!("smoke_spsc...");
-    let (producer, consumer) = spsc::new::<i32, 128>();
+    let (producer, consumer) =
+        spsc::new::<i32, 128, GlobalAllocator>(spsc::Options::global_mlocked());
     assert!(producer.push(123).is_none());
     assert!(matches!(consumer.pop(), Some(123)));
 }
@@ -29,7 +33,8 @@ fn smoke_seqlock() {
 
 fn smoke_spmc() {
     println!("smoke_spmc...");
-    let (producer, consumers) = spmc::new::<i32, 128, 2>();
+    let (producer, consumers) =
+        spmc::new::<i32, 128, 2, GlobalAllocator>(spmc::Options::global_mlocked());
     let [mut c1, mut c2] = consumers;
     assert_eq!(c1.try_read(), ReadResult::Empty);
     assert_eq!(c2.try_read(), ReadResult::Empty);

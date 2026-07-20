@@ -30,7 +30,8 @@ use std::thread;
 use hdrhistogram::Histogram;
 use low_latency_data_structures::bench::tsc::rdtscp;
 use low_latency_data_structures::bench::{loc, preflight};
-use low_latency_data_structures::spsc::new;
+use low_latency_data_structures::mem::global::GlobalAllocator;
+use low_latency_data_structures::spsc::{Options, new};
 
 fn preflight(used_cores: &[usize]) {
     let mut r = preflight::PreflightReport::default();
@@ -69,7 +70,7 @@ fn main() {
     const N: u64 = 10_000_000;
     const WARMUP: u64 = 1_000_000;
 
-    let (producer, consumer) = new::<u64, CAPACITY>();
+    let (producer, consumer) = new::<u64, CAPACITY, GlobalAllocator>(Options::global_mlocked());
     let barrier = Arc::new(Barrier::new(3));
     let done = Arc::new(AtomicBool::new(false));
     let clock = quanta::Clock::new();

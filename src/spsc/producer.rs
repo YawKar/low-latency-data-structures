@@ -7,6 +7,7 @@ use crate::shim::sync::atomic::AtomicUsize;
 use crate::spsc::queue::Queue;
 
 #[repr(C, align(128))]
+#[derive(Default)]
 pub(super) struct ProducerState {
     pub tail: AtomicUsize,
     pub cached_head: Cell<usize>,
@@ -15,7 +16,7 @@ pub(super) struct ProducerState {
 /// The pushing handle of an SPSC FIFO queue.
 ///
 /// Created together with its paired [`Consumer`](crate::spsc::Consumer) by
-/// [`new`](crate::spsc::new) (or [`new_hugepage_backed`](crate::spsc::new_hugepage_backed)).
+/// [`new`](crate::spsc::new).
 /// `Producer` is [`Send`] but not [`Sync`]: at most one thread may push at a
 /// time.
 pub struct Producer<T, const CAPACITY: usize, AllocT: Allocation<T>> {
@@ -57,9 +58,12 @@ impl<T, const CAPACITY: usize, AllocT: Allocation<T>> Producer<T, CAPACITY, Allo
     /// # Examples
     ///
     /// ```
-    /// use low_latency_data_structures::spsc::new;
+    /// use low_latency_data_structures::spsc::{self, new};
+    /// use low_latency_data_structures::mem::global::GlobalAllocator;
     ///
-    /// let (producer, consumer) = new::<u64, 2>();
+    /// let (producer, consumer) = new::<u64, 2, GlobalAllocator>(
+    ///     spsc::Options::global_mlocked(),
+    /// );
     /// assert_eq!(producer.push(1), None);
     /// assert_eq!(producer.push(2), None);
     /// // Queue is full; item is handed back so we can retry later.
@@ -75,16 +79,8 @@ impl<T, const CAPACITY: usize, AllocT: Allocation<T>> Producer<T, CAPACITY, Allo
 
 #[cfg(test)]
 mod tests {
-
     use super::*;
-    use crate::shim::cell::UnsafeCell;
-
-    struct NeverAlloc;
-    impl<T> Allocation<T> for NeverAlloc {
-        fn ptr(&self) -> *mut UnsafeCell<std::mem::MaybeUninit<T>> {
-            unreachable!("it's just a stub")
-        }
-    }
+    use crate::mem::test_util::NeverAlloc;
 
     // Shouldn't be possible to construct Arc<Producer<T>> and then use it from different threads as it
     // will break the requirement of *Single* producer *Single* consumer queue.
