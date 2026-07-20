@@ -8,10 +8,12 @@
 //! See [`new`] for the entry point, [`Producer`] for publishing, and
 //! [`Consumer`] / [`ReadResult`] for reading.
 
+mod builder;
 mod consumer;
 mod producer;
 mod queue;
 
+pub use builder::Options;
 pub use consumer::{Consumer, ReadResult};
 pub use producer::Producer;
-pub use queue::new;
+pub use queue::{Slot, new};

@@ -4,7 +4,8 @@ use std::hint::black_box;
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use duplicate::duplicate;
-use low_latency_data_structures::spsc::new;
+use low_latency_data_structures::mem::global::GlobalAllocator;
+use low_latency_data_structures::spsc::{Options, new};
 
 criterion_main!(benches);
 
@@ -25,7 +26,7 @@ fn single_thread_ping_pong(c: &mut Criterion) {
         {
             let capacity_label = CAPACITY;
             g.bench_function(format!("capacity={capacity_label}"), |b| {
-                let (p, c) = new::<_, CAPACITY>();
+                let (p, c) = new::<_, CAPACITY, GlobalAllocator>(Options::global_mlocked());
                 b.iter(|| {
                     black_box(p.push(black_box(42)));
                     black_box(c.pop());

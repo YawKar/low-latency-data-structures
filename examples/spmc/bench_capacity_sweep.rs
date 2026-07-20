@@ -48,7 +48,8 @@ use duplicate::duplicate;
 use hdrhistogram::Histogram;
 use low_latency_data_structures::bench::tsc::{calibrate_hz, rdtscp};
 use low_latency_data_structures::bench::{fmt, loc, preflight};
-use low_latency_data_structures::spmc::{ReadResult, new};
+use low_latency_data_structures::mem::global::GlobalAllocator;
+use low_latency_data_structures::spmc::{Options, ReadResult, new};
 
 fn preflight(used_cores: &[usize]) {
     let mut r = preflight::PreflightReport::default();
@@ -92,7 +93,7 @@ macro_rules! run_one {
         // intermediate `[Slot; CAPACITY]` construction inside `new()`.
         let (producer, [mut consumer]) = thread::Builder::new()
             .stack_size(BUILDER_STACK_BYTES)
-            .spawn(|| new::<u64, CAPACITY, 1>())
+            .spawn(|| new::<u64, CAPACITY, 1, GlobalAllocator>(Options::global_mlocked()))
             .unwrap()
             .join()
             .unwrap();
