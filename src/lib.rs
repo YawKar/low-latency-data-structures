@@ -47,6 +47,11 @@
 #![warn(unsafe_op_in_unsafe_fn)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
+#[cfg(not(target_os = "linux"))]
+compile_error!(
+    "This crate only supports Linux operating systems. See: https://github.com/YawKar/low-latency-data-structures/issues/9"
+);
+
 #[cfg(feature = "_bench_utils")]
 #[doc(hidden)]
 pub mod bench;
