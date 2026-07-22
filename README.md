@@ -195,7 +195,7 @@ turbo, sibling offline). The boot-time knobs (`isolcpus`, `nohz_full`,
 | Primitive | basic | loom | dhat | hugepage |
 | --- | --- | --- | --- | --- |
 | `spsc` | yes | yes | yes | yes |
-| `spmc` | yes | no | no | n/a |
+| `spmc` | yes | no | yes | yes |
 | `seqlock` | yes | no | yes | n/a |
 
 - `basic` exercises behaviour through the public API on real `std::thread`
