@@ -322,3 +322,51 @@ mod tests {
         assert_eq!(c1.try_read(), ReadResult::Value(CAPACITY + 2));
     }
 }
+
+#[cfg(test)]
+#[cfg(feature = "tests_dhat")]
+mod tests_dhat {
+    use super::*;
+    use crate::mem::global::GlobalAllocator;
+
+    #[test]
+    fn hot_path_zero_allocations() {
+        let _profiler = dhat::Profiler::builder().testing().build();
+        let (producer, [mut c1, mut c2, mut c3]) =
+            new::<u64, 1024, 3, GlobalAllocator>(Options::global_mlocked());
+
+        // Warm up to absorb any one-time platform allocations: lazy symbol
+        // resolution in the dynamic linker, libstd TLS init, debug-build
+        // slow-path stubs that LLVM emits. None of these scale with iteration
+        // count; the per-iteration regression we actually care about would
+        // dwarf the slack budget below.
+        for i in 0..1024u64 {
+            let _ = producer.publish(i);
+        }
+        for _ in 0..1024 {
+            let _ = c1.try_read();
+            let _ = c2.try_read();
+            let _ = c3.try_read();
+        }
+        let _ = dhat::HeapStats::get();
+
+        let before = dhat::HeapStats::get();
+
+        for i in 0..1024u64 {
+            let _ = producer.publish(i);
+        }
+        for _ in 0..1024 {
+            let _ = c1.try_read();
+            let _ = c2.try_read();
+            let _ = c3.try_read();
+        }
+
+        let after = dhat::HeapStats::get();
+        let allocs = after.total_blocks - before.total_blocks;
+        dhat::assert!(
+            allocs == 0,
+            "hot path allocated {} blocks; a real regression would be O(iters)",
+            allocs,
+        );
+    }
+}

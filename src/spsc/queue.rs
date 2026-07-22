@@ -531,6 +531,7 @@ mod tests_dhat {
         for _ in 0..1024 {
             let _ = consumer.pop();
         }
+        let _ = dhat::HeapStats::get();
 
         let before = dhat::HeapStats::get();
 
@@ -544,7 +545,7 @@ mod tests_dhat {
         let after = dhat::HeapStats::get();
         let allocs = after.total_blocks - before.total_blocks;
         dhat::assert!(
-            allocs < 64,
+            allocs == 0,
             "hot path allocated {} blocks; a real regression would be O(iters)",
             allocs,
         );
