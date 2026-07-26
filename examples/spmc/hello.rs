@@ -3,9 +3,9 @@
 
 use std::thread;
 
-use low_latency_data_structures::mem::Allocation;
+use low_latency_data_structures::mem::Allocator;
 use low_latency_data_structures::mem::global::GlobalAllocator;
-use low_latency_data_structures::spmc::{self, ReadResult, Slot};
+use low_latency_data_structures::spmc::{self, ReadResult};
 
 fn main() {
     let (producer, consumers) =
@@ -28,8 +28,8 @@ fn main() {
     println!("consumer B observed: {b:?}");
 }
 
-fn collect<AllocT: Allocation<Slot<u64>>>(
-    c: &mut spmc::Consumer<u64, 16, AllocT>,
+fn collect<AllocatorT: Allocator>(
+    c: &mut spmc::Consumer<u64, 16, AllocatorT>,
     n: usize,
 ) -> Vec<u64> {
     let mut seen = Vec::with_capacity(n);

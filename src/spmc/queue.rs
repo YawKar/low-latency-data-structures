@@ -1,4 +1,3 @@
-use std::marker::PhantomData;
 use std::mem::MaybeUninit;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering, fence};
@@ -50,11 +49,11 @@ use crate::spmc::producer::{Producer, ProducerState};
 ///     }
 /// });
 /// ```
-pub fn new<T, const CAPACITY: usize, const NCONSUMERS: usize, Alloc: Allocator>(
-    options: Options<Alloc>,
+pub fn new<T, const CAPACITY: usize, const NCONSUMERS: usize, AllocatorT: Allocator>(
+    options: Options<AllocatorT>,
 ) -> (
-    Producer<T, CAPACITY, impl Allocation<Slot<T>>>,
-    [Consumer<T, CAPACITY, impl Allocation<Slot<T>>>; NCONSUMERS],
+    Producer<T, CAPACITY, AllocatorT>,
+    [Consumer<T, CAPACITY, AllocatorT>; NCONSUMERS],
 )
 where
     T: bytemuck::AnyBitPattern,
@@ -65,7 +64,7 @@ where
             "Given capacity is not a power of two",
         );
     }
-    let slots = Alloc::allocate::<Slot<T>>(CAPACITY, options.alloc);
+    let slots = AllocatorT::allocate::<Slot<T>>(CAPACITY, options.alloc);
     // Initialize every slot before any producer/consumer can touch it. The
     // seqlock protocol assumes `seq` starts at an even value (0); without
     // this loop, an allocator that returns garbage (e.g. GlobalAllocator on
@@ -91,7 +90,6 @@ where
             write_cursor: AtomicUsize::new(0),
         },
         slots,
-        _t: PhantomData,
     });
     let producer = Producer::new(q.clone());
     let consumers = std::array::from_fn(|_| Consumer::new(q.clone()));
@@ -109,26 +107,25 @@ pub struct Slot<T: bytemuck::AnyBitPattern> {
     pub(super) data: UnsafeCell<T>,
 }
 
-pub(super) struct Queue<T, const CAPACITY: usize, AllocT: Allocation<Slot<T>>>
+pub(super) struct Queue<T, const CAPACITY: usize, AllocatorT: Allocator>
 where
     T: bytemuck::AnyBitPattern,
 {
     pub(super) producer_state: ProducerState,
-    pub(super) slots: AllocT,
-    pub(super) _t: PhantomData<T>,
+    pub(super) slots: AllocatorT::Allocation<Slot<T>>,
 }
 
 // SAFETY: Queue uses Slot<T> which is !Sync because of UnsafeCell, but the queue itself can only be
 // used through publish/Consumer APIs both of which synchronize themselves using seqlock seq.
-unsafe impl<T: bytemuck::AnyBitPattern, const CAPACITY: usize, AllocT: Allocation<Slot<T>>> Sync
-    for Queue<T, CAPACITY, AllocT>
+unsafe impl<T: bytemuck::AnyBitPattern, const CAPACITY: usize, AllocatorT: Allocator> Sync
+    for Queue<T, CAPACITY, AllocatorT>
 {
 }
 
-impl<T, const CAPACITY: usize, AllocT> Queue<T, CAPACITY, AllocT>
+impl<T, const CAPACITY: usize, AllocatorT> Queue<T, CAPACITY, AllocatorT>
 where
     T: bytemuck::AnyBitPattern,
-    AllocT: Allocation<Slot<T>>,
+    AllocatorT: Allocator,
 {
     #[inline]
     pub(super) fn publish(&self, value: T) {
@@ -181,10 +178,10 @@ mod tests {
     use crate::mem::global::GlobalAllocator;
     #[cfg(feature = "tests_hugepage")]
     use crate::mem::hugepages::{HugepageAllocator, HugepageAllocatorOptions, HugepageSize};
-    use crate::mem::test_util::NeverAlloc;
+    use crate::mem::test_util::NeverAllocator;
     use crate::spmc::consumer::ReadResult;
 
-    static_assertions::assert_impl_all!(Queue<u32, 1, NeverAlloc>: Sync, Send);
+    static_assertions::assert_impl_all!(Queue<u32, 1, NeverAllocator>: Sync, Send);
 
     #[cfg(not(feature = "tests_hugepage"))]
     fn spmc_options() -> Options<GlobalAllocator> {

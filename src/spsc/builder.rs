@@ -9,8 +9,8 @@ use crate::mem::global::{GlobalAllocator, GlobalAllocatorOptions};
 /// every [`Allocator`] impl. Use [`Options::builder`] to build one explicitly,
 /// or [`Options::global_mlocked`] for the common global + `mlock` case.
 #[derive(Builder)]
-pub struct Options<Alloc: Allocator> {
-    pub(crate) alloc: Alloc::Options,
+pub struct Options<AllocatorT: Allocator> {
+    pub(crate) alloc: AllocatorT::Options,
 }
 
 impl Options<GlobalAllocator> {
