@@ -2,11 +2,14 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 
+use crossbeam_utils::CachePadded;
+
 use crate::mem::Allocator;
 use crate::spmc::queue::{Queue, Slot};
 
-#[repr(C, align(128))]
-pub(super) struct ProducerState {
+pub(super) type ProducerState = CachePadded<ProducerStateInner>;
+
+pub(super) struct ProducerStateInner {
     pub(super) write_cursor: AtomicUsize,
 }
 

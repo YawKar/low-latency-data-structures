@@ -6,7 +6,7 @@ use crate::mem::{Allocation, Allocator};
 use crate::shim::cell::UnsafeCell;
 use crate::spmc::builder::Options;
 use crate::spmc::consumer::Consumer;
-use crate::spmc::producer::{Producer, ProducerState};
+use crate::spmc::producer::{Producer, ProducerState, ProducerStateInner};
 
 /// Creates a new SPMC broadcast queue with `CAPACITY` slots and `NCONSUMERS`
 /// pre-built [`Consumer`]s.
@@ -87,9 +87,10 @@ where
         }
     }
     let q = Arc::new(Queue {
-        producer_state: ProducerState {
+        producer_state: ProducerStateInner {
             write_cursor: AtomicUsize::new(0),
-        },
+        }
+        .into(),
         slots,
     });
     let producer = Producer::new(q.clone());

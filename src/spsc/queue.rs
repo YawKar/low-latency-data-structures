@@ -64,7 +64,6 @@ where
     (producer, consumer)
 }
 
-#[repr(C)]
 pub(super) struct Queue<T, const CAPACITY: usize, A>
 where
     A: Allocator,
