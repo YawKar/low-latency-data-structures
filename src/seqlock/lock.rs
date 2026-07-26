@@ -2,6 +2,8 @@ use std::cell::UnsafeCell;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering, fence};
 
+use crossbeam_utils::CachePadded;
+
 use crate::seqlock::reader::Reader;
 use crate::seqlock::writer::Writer;
 
@@ -24,23 +26,27 @@ pub fn new<T>(initial_value: T) -> (Writer<T>, Reader<T>)
 where
     T: bytemuck::AnyBitPattern,
 {
-    let sl = Arc::new(SeqLock {
-        seq: AtomicU64::new(0),
-        data: UnsafeCell::new(initial_value),
-    });
+    let sl: Arc<SeqLock<T>> = Arc::new(
+        SeqLockInner {
+            data: UnsafeCell::new(initial_value),
+            seq: AtomicU64::new(0),
+        }
+        .into(),
+    );
     let writer = Writer::new(sl.clone());
     let reader = Reader::new(sl);
     (writer, reader)
 }
 
-/// 128 = adjacent-line prefetcher granularity, not cache line size
-#[repr(C, align(128))]
-pub(super) struct SeqLock<T>
-where
-    T: bytemuck::AnyBitPattern,
-{
-    seq: AtomicU64,
+pub(super) type SeqLock<T> = CachePadded<SeqLockInner<T>>;
+
+pub(super) struct SeqLockInner<T> {
+    // `data` first, `seq` after: mirrors Rigtorp's layout so a small T and
+    // the seq counter land on the same cache line under the CachePadded
+    // wrapper. Reader touches one line per load; writer touches one line
+    // per store.
     data: UnsafeCell<T>,
+    seq: AtomicU64,
 }
 
 // SAFETY: UnsafeCell is not Sync but access is synchronised through the
@@ -49,9 +55,9 @@ where
 // AnyBitPattern` guarantees every bit pattern materialises a valid T, so the
 // worst-case observed value is stale, never UB. The seq check around the
 // read rejects stale or torn values before they leave `Reader::read`.
-unsafe impl<T> Sync for SeqLock<T> where T: bytemuck::AnyBitPattern {}
+unsafe impl<T> Sync for SeqLockInner<T> where T: bytemuck::AnyBitPattern {}
 
-impl<T> SeqLock<T>
+impl<T> SeqLockInner<T>
 where
     T: bytemuck::AnyBitPattern,
 {
@@ -61,9 +67,9 @@ where
         self.seq.store(s.wrapping_add(1), Ordering::Relaxed);
         // ARM: prevents the write from reordering above the s load
         fence(Ordering::Release);
-        // SAFETY: see the unsafe impl Sync for SeqLock above. write_volatile
-        // also pins the store: it cannot be reordered with the surrounding
-        // seq stores by the compiler.
+        // SAFETY: see the unsafe impl Sync for SeqLockInner above.
+        // write_volatile also pins the store: it cannot be reordered with
+        // the surrounding seq stores by the compiler.
         unsafe { self.data.get().write_volatile(value) };
         self.seq.store(s.wrapping_add(2), Ordering::Release);
     }
@@ -75,8 +81,8 @@ where
             if s1 & 1 == 1 {
                 continue;
             }
-            // SAFETY: see the unsafe impl Sync for SeqLock above. The torn
-            // read is filtered by the s1==s2 check below.
+            // SAFETY: see the unsafe impl Sync for SeqLockInner above. The
+            // torn read is filtered by the s1==s2 check below.
             let read_attempt = unsafe { self.data.get().read_volatile() };
             // ARM: prevents the read from reordering below the s2 load
             fence(Ordering::Acquire);

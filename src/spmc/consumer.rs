@@ -2,11 +2,14 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 use std::sync::atomic::{Ordering, fence};
 
+use crossbeam_utils::CachePadded;
+
 use crate::mem::{Allocation, Allocator};
 use crate::spmc::queue::{Queue, Slot};
 
-#[repr(C, align(128))]
-pub(super) struct ConsumerState {
+pub(super) type ConsumerState = CachePadded<ConsumerStateInner>;
+
+pub(super) struct ConsumerStateInner {
     read_cursor: usize,
     cached_write_cursor: usize,
 }
@@ -91,10 +94,11 @@ where
 {
     pub(super) fn new(queue: Arc<Queue<T, CAPACITY, A>>) -> Self {
         Self {
-            state: ConsumerState {
+            state: ConsumerStateInner {
                 read_cursor: 0,
                 cached_write_cursor: 0,
-            },
+            }
+            .into(),
             inner: queue,
             _not_sync: PhantomData,
         }
