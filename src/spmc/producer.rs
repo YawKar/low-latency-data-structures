@@ -2,8 +2,8 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 
-use crate::mem::Allocation;
-use crate::spmc::queue::{Queue, Slot};
+use crate::mem::Allocator;
+use crate::spmc::queue::Queue;
 
 #[repr(C, align(128))]
 pub(super) struct ProducerState {
@@ -21,14 +21,13 @@ pub(super) struct ProducerState {
 /// oldest slot is overwritten, and any consumer that hasn't read past that
 /// slot will observe a [`ReadResult::Lapped`](crate::spmc::ReadResult::Lapped)
 /// on its next read.
-pub struct Producer<T: bytemuck::AnyBitPattern, const CAPACITY: usize, AllocT: Allocation<Slot<T>>>
-{
-    inner: Arc<Queue<T, CAPACITY, AllocT>>,
+pub struct Producer<T: bytemuck::AnyBitPattern, const CAPACITY: usize, AllocatorT: Allocator> {
+    inner: Arc<Queue<T, CAPACITY, AllocatorT>>,
     _not_sync: PhantomData<*const ()>,
 }
 
-impl<T: bytemuck::AnyBitPattern, const CAPACITY: usize, AllocT: Allocation<Slot<T>>> std::fmt::Debug
-    for Producer<T, CAPACITY, AllocT>
+impl<T: bytemuck::AnyBitPattern, const CAPACITY: usize, AllocatorT: Allocator> std::fmt::Debug
+    for Producer<T, CAPACITY, AllocatorT>
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Producer")
@@ -38,26 +37,29 @@ impl<T: bytemuck::AnyBitPattern, const CAPACITY: usize, AllocT: Allocation<Slot<
 }
 
 // SAFETY: it is Send on its own but we need to restrict only Sync.
-unsafe impl<T: bytemuck::AnyBitPattern, const CAPACITY: usize, AllocT: Allocation<Slot<T>>> Send
-    for Producer<T, CAPACITY, AllocT>
+unsafe impl<T, const CAPACITY: usize, AllocatorT> Send for Producer<T, CAPACITY, AllocatorT>
+where
+    AllocatorT: Allocator,
+    T: bytemuck::AnyBitPattern + Send,
+    AllocatorT::Allocation<T>: Send,
 {
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mem::test_util::NeverAlloc;
+    use crate::mem::test_util::NeverAllocator;
 
-    static_assertions::assert_impl_all!(Producer<u32, 1, NeverAlloc>: Send);
-    static_assertions::assert_not_impl_any!(Producer<u32, 1, NeverAlloc>: Sync, Clone, Copy);
+    static_assertions::assert_impl_all!(Producer<u32, 1, NeverAllocator>: Send);
+    static_assertions::assert_not_impl_any!(Producer<u32, 1, NeverAllocator>: Sync, Clone, Copy);
 }
 
-impl<T, const CAPACITY: usize, AllocT> Producer<T, CAPACITY, AllocT>
+impl<T, const CAPACITY: usize, AllocatorT> Producer<T, CAPACITY, AllocatorT>
 where
     T: bytemuck::AnyBitPattern,
-    AllocT: Allocation<Slot<T>>,
+    AllocatorT: Allocator,
 {
-    pub(super) fn new(queue: Arc<Queue<T, CAPACITY, AllocT>>) -> Self {
+    pub(super) fn new(queue: Arc<Queue<T, CAPACITY, AllocatorT>>) -> Self {
         Self {
             inner: queue,
             _not_sync: PhantomData,

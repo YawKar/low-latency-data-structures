@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 use std::sync::atomic::{Ordering, fence};
 
-use crate::mem::Allocation;
+use crate::mem::{Allocation, Allocator};
 use crate::spmc::queue::{Queue, Slot};
 
 #[repr(C, align(128))]
@@ -43,15 +43,14 @@ pub enum ReadResult<T> {
 /// `Consumer` is [`Send`] but not [`Sync`]: at most one thread may call
 /// [`try_read`](Self::try_read) on a given consumer at a time. To get more
 /// consumers, request more at construction via [`new`](crate::spmc::new).
-pub struct Consumer<T: bytemuck::AnyBitPattern, const CAPACITY: usize, AllocT: Allocation<Slot<T>>>
-{
+pub struct Consumer<T: bytemuck::AnyBitPattern, const CAPACITY: usize, AllocatorT: Allocator> {
     state: ConsumerState,
-    inner: Arc<Queue<T, CAPACITY, AllocT>>,
+    inner: Arc<Queue<T, CAPACITY, AllocatorT>>,
     _not_sync: PhantomData<*const ()>,
 }
 
-impl<T: bytemuck::AnyBitPattern, const CAPACITY: usize, AllocT: Allocation<Slot<T>>> std::fmt::Debug
-    for Consumer<T, CAPACITY, AllocT>
+impl<T: bytemuck::AnyBitPattern, const CAPACITY: usize, AllocatorT: Allocator> std::fmt::Debug
+    for Consumer<T, CAPACITY, AllocatorT>
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Consumer")
@@ -62,26 +61,29 @@ impl<T: bytemuck::AnyBitPattern, const CAPACITY: usize, AllocT: Allocation<Slot<
 }
 
 // SAFETY: It is Send on its own but we need to forbid the Sync.
-unsafe impl<T: bytemuck::AnyBitPattern, const CAPACITY: usize, AllocT: Allocation<Slot<T>>> Send
-    for Consumer<T, CAPACITY, AllocT>
+unsafe impl<T, const CAPACITY: usize, AllocatorT> Send for Consumer<T, CAPACITY, AllocatorT>
+where
+    AllocatorT: Allocator,
+    T: bytemuck::AnyBitPattern + Send,
+    AllocatorT::Allocation<T>: Send,
 {
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mem::test_util::NeverAlloc;
+    use crate::mem::test_util::NeverAllocator;
 
-    static_assertions::assert_impl_all!(Consumer<u32, 2, NeverAlloc>: Send);
-    static_assertions::assert_not_impl_any!(Consumer<u32, 2, NeverAlloc>: Sync, Clone, Copy);
+    static_assertions::assert_impl_all!(Consumer<u32, 2, NeverAllocator>: Send);
+    static_assertions::assert_not_impl_any!(Consumer<u32, 2, NeverAllocator>: Sync, Clone, Copy);
 }
 
-impl<T, const CAPACITY: usize, AllocT> Consumer<T, CAPACITY, AllocT>
+impl<T, const CAPACITY: usize, AllocatorT> Consumer<T, CAPACITY, AllocatorT>
 where
     T: bytemuck::AnyBitPattern,
-    AllocT: Allocation<Slot<T>>,
+    AllocatorT: Allocator,
 {
-    pub(super) fn new(queue: Arc<Queue<T, CAPACITY, AllocT>>) -> Self {
+    pub(super) fn new(queue: Arc<Queue<T, CAPACITY, AllocatorT>>) -> Self {
         Self {
             state: ConsumerState {
                 read_cursor: 0,

@@ -14,11 +14,15 @@ pub trait Allocator {
     /// Configuration passed to [`allocate`](Self::allocate). Each allocator
     /// defines its own options type (e.g. mlock toggle, hugepage size).
     type Options;
+    /// Allocation wrapper type returned by [`allocate`](Self::allocate).
+    type Allocation<T>: Allocation<T>;
 
     /// Allocates space for `items` cells of `T`.
     ///
     /// The returned [`Allocation`] owns the memory and releases it on drop.
-    fn allocate<T>(items: usize, options: Self::Options) -> impl Allocation<T>;
+    /// The cells may be uninitialized; callers must write a cell before
+    /// reading it.
+    fn allocate<T>(items: usize, options: Self::Options) -> Self::Allocation<T>;
 }
 
 /// Handle for a slot buffer produced by an [`Allocator`].
@@ -33,15 +37,30 @@ pub trait Allocation<T> {
 
 #[cfg(test)]
 pub(crate) mod test_util {
+    use std::marker::PhantomData;
+
     use super::*;
 
     /// A stub `Allocation` used only in `static_assertions` trait-bound
     /// checks. Its `ptr()` must never be called.
-    pub(crate) struct NeverAlloc;
+    pub(crate) struct NeverAllocation<T> {
+        _t: PhantomData<T>,
+    }
 
-    impl<T> Allocation<T> for NeverAlloc {
+    pub(crate) struct NeverAllocator;
+
+    impl Allocator for NeverAllocator {
+        type Options = ();
+        type Allocation<T> = NeverAllocation<T>;
+
+        fn allocate<T>(_items: usize, _options: Self::Options) -> Self::Allocation<T> {
+            unreachable!("NeverAllocator is a stub for trait checks only");
+        }
+    }
+
+    impl<T> Allocation<T> for NeverAllocation<T> {
         fn ptr(&self) -> *mut UnsafeCell<MaybeUninit<T>> {
-            unreachable!("NeverAlloc is a stub for trait checks only")
+            unreachable!("NeverAllocation is a stub for trait checks only")
         }
     }
 }
@@ -105,6 +124,26 @@ pub mod hugepages {
 
     /// Allocates via `mmap(MAP_HUGETLB | MAP_HUGE_<size>)`. Requires the
     /// kernel to have enough free hugepages of the requested size.
+    ///
+    /// # Examples
+    ///
+    /// Build an SPSC queue backed by 2 MB hugepages with `mlock`:
+    ///
+    /// ```no_run
+    /// use low_latency_data_structures::mem::hugepages::{
+    ///     HugepageAllocator, HugepageAllocatorOptions, HugepageSize,
+    /// };
+    /// use low_latency_data_structures::spsc;
+    ///
+    /// let alloc = HugepageAllocatorOptions::builder()
+    ///     .mlock(true)
+    ///     .hugepage_size(HugepageSize::H2MB)
+    ///     .build();
+    /// let (producer, consumer) = spsc::new::<u64, 1024, HugepageAllocator>(
+    ///     spsc::Options::builder().alloc(alloc).build(),
+    /// );
+    /// # let _ = (producer, consumer);
+    /// ```
     pub struct HugepageAllocator;
 
     /// Options for [`HugepageAllocator`].
@@ -118,9 +157,10 @@ pub mod hugepages {
 
     impl Allocator for HugepageAllocator {
         type Options = HugepageAllocatorOptions;
+        type Allocation<T> = HugepageAllocation<T>;
 
         #[inline]
-        fn allocate<T>(items: usize, options: Self::Options) -> impl Allocation<T> {
+        fn allocate<T>(items: usize, options: Self::Options) -> Self::Allocation<T> {
             let layout =
                 alloc::Layout::array::<UnsafeCell<MaybeUninit<T>>>(items).unwrap_or_else(|_| {
                     panic!(
@@ -160,21 +200,23 @@ pub mod hugepages {
                     std::io::Error::last_os_error()
                 );
             }
-            HugePageAllocation {
+            HugepageAllocation {
                 ptr: ptr as *mut UnsafeCell<MaybeUninit<T>>,
                 length: alloc_size,
             }
         }
     }
 
-    pub(crate) struct HugePageAllocation<T> {
+    /// Owned mmap'd hugepage region returned by
+    /// [`HugepageAllocator::allocate`]. Releases via `munmap` on drop.
+    pub struct HugepageAllocation<T> {
         ptr: *mut UnsafeCell<MaybeUninit<T>>,
         length: usize,
     }
 
-    unsafe impl<T: Send> Send for HugePageAllocation<T> {}
+    unsafe impl<T: Send> Send for HugepageAllocation<T> {}
 
-    impl<T> Drop for HugePageAllocation<T> {
+    impl<T> Drop for HugepageAllocation<T> {
         fn drop(&mut self) {
             let rc = unsafe { libc::munmap(self.ptr.cast(), self.length) };
             assert_ne!(
@@ -186,7 +228,7 @@ pub mod hugepages {
         }
     }
 
-    impl<T> Allocation<T> for HugePageAllocation<T> {
+    impl<T> Allocation<T> for HugepageAllocation<T> {
         #[inline]
         fn ptr(&self) -> *mut UnsafeCell<MaybeUninit<T>> {
             self.ptr
@@ -211,9 +253,10 @@ pub mod global {
 
     impl Allocator for GlobalAllocator {
         type Options = GlobalAllocatorOptions;
+        type Allocation<T> = GlobalAllocation<T>;
 
         #[inline]
-        fn allocate<T>(items: usize, options: Self::Options) -> impl Allocation<T> {
+        fn allocate<T>(items: usize, options: Self::Options) -> Self::Allocation<T> {
             let layout =
                 alloc::Layout::array::<UnsafeCell<MaybeUninit<T>>>(items).unwrap_or_else(|_| {
                     panic!(
@@ -241,7 +284,9 @@ pub mod global {
         }
     }
 
-    pub(crate) struct GlobalAllocation<T> {
+    /// Owned global-allocator region returned by
+    /// [`GlobalAllocator::allocate`]. Releases via `dealloc` on drop.
+    pub struct GlobalAllocation<T> {
         ptr: *mut UnsafeCell<MaybeUninit<T>>,
         layout: alloc::Layout,
     }
@@ -273,9 +318,10 @@ pub(crate) mod loom {
 
     impl Allocator for LoomVecAllocator {
         type Options = LoomVecAllocatorOptions;
+        type Allocation<T> = LoomVecAllocation<T>;
 
         #[inline]
-        fn allocate<T>(items: usize, _options: Self::Options) -> impl Allocation<T> {
+        fn allocate<T>(items: usize, _options: Self::Options) -> Self::Allocation<T> {
             type RealT<T> = UnsafeCell<MaybeUninit<T>>;
             let mut buffer: Vec<RealT<T>> = Vec::with_capacity(items);
             for _ in 0..items {
@@ -290,7 +336,7 @@ pub(crate) mod loom {
         }
     }
 
-    pub(crate) struct LoomVecAllocation<T> {
+    pub struct LoomVecAllocation<T> {
         ptr: *mut UnsafeCell<MaybeUninit<T>>,
         capacity: usize,
     }
