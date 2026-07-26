@@ -19,13 +19,17 @@ pub(super) struct ProducerState {
 /// [`new`](crate::spsc::new).
 /// `Producer` is [`Send`] but not [`Sync`]: at most one thread may push at a
 /// time.
-pub struct Producer<T, const CAPACITY: usize, AllocatorT: Allocator> {
-    inner: Arc<Queue<T, CAPACITY, AllocatorT>>,
+pub struct Producer<T, const CAPACITY: usize, A>
+where
+    A: Allocator,
+{
+    inner: Arc<Queue<T, CAPACITY, A>>,
     _not_sync: PhantomData<*const ()>,
 }
 
-impl<T, const CAPACITY: usize, AllocatorT: Allocator> std::fmt::Debug
-    for Producer<T, CAPACITY, AllocatorT>
+impl<T, const CAPACITY: usize, A> std::fmt::Debug for Producer<T, CAPACITY, A>
+where
+    A: Allocator,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Producer")
@@ -36,16 +40,19 @@ impl<T, const CAPACITY: usize, AllocatorT: Allocator> std::fmt::Debug
 
 // SAFETY: Producer is Send because the underlying Queue is Send when both T
 // and the allocation are Send; PhantomData<*const ()> blocks Sync.
-unsafe impl<T, const CAPACITY: usize, AllocatorT> Send for Producer<T, CAPACITY, AllocatorT>
+unsafe impl<T, const CAPACITY: usize, A> Send for Producer<T, CAPACITY, A>
 where
     T: Send,
-    AllocatorT: Allocator,
-    AllocatorT::Allocation<T>: Send,
+    A: Allocator,
+    A::Allocation<T>: Send,
 {
 }
 
-impl<T, const CAPACITY: usize, AllocatorT: Allocator> Producer<T, CAPACITY, AllocatorT> {
-    pub(super) fn new(queue: Arc<Queue<T, CAPACITY, AllocatorT>>) -> Self {
+impl<T, const CAPACITY: usize, A> Producer<T, CAPACITY, A>
+where
+    A: Allocator,
+{
+    pub(super) fn new(queue: Arc<Queue<T, CAPACITY, A>>) -> Self {
         Self {
             inner: queue,
             _not_sync: PhantomData,

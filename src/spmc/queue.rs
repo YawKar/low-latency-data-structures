@@ -49,14 +49,15 @@ use crate::spmc::producer::{Producer, ProducerState};
 ///     }
 /// });
 /// ```
-pub fn new<T, const CAPACITY: usize, const NCONSUMERS: usize, AllocatorT: Allocator>(
-    options: Options<AllocatorT>,
+pub fn new<T, const CAPACITY: usize, const NCONSUMERS: usize, A>(
+    options: Options<A>,
 ) -> (
-    Producer<T, CAPACITY, AllocatorT>,
-    [Consumer<T, CAPACITY, AllocatorT>; NCONSUMERS],
+    Producer<T, CAPACITY, A>,
+    [Consumer<T, CAPACITY, A>; NCONSUMERS],
 )
 where
     T: bytemuck::AnyBitPattern,
+    A: Allocator,
 {
     const {
         assert!(
@@ -64,7 +65,7 @@ where
             "Given capacity is not a power of two",
         );
     }
-    let slots = AllocatorT::allocate::<Slot<T>>(CAPACITY, options.alloc);
+    let slots = A::allocate::<Slot<T>>(CAPACITY, options.alloc);
     // Initialize every slot before any producer/consumer can touch it. The
     // seqlock protocol assumes `seq` starts at an even value (0); without
     // this loop, an allocator that returns garbage (e.g. GlobalAllocator on
@@ -72,7 +73,7 @@ where
     // matching `seq` and hand back uninitialized `T`.
     for ix in 0..CAPACITY {
         // SAFETY: `ix < CAPACITY`, so the derived pointer is inside the
-        // allocation returned by `Alloc::allocate` and is aligned and
+        // allocation returned by `A::allocate` and is aligned and
         // dereferenceable per the `Allocator` contract.
         let slot = unsafe { slots.ptr().wrapping_add(ix).as_mut_unchecked() };
         // SAFETY: `slot.get()` returns a `*mut MaybeUninit<Slot<T>>` into
@@ -102,30 +103,36 @@ where
 /// Exposed only so callers can name the [`Allocation<Slot<T>>`](Allocation)
 /// bound when writing generic helpers over the queue; there are no methods
 /// intended for direct use.
-pub struct Slot<T: bytemuck::AnyBitPattern> {
+pub struct Slot<T>
+where
+    T: bytemuck::AnyBitPattern,
+{
     pub(super) seq: AtomicUsize,
     pub(super) data: UnsafeCell<T>,
 }
 
-pub(super) struct Queue<T, const CAPACITY: usize, AllocatorT: Allocator>
+pub(super) struct Queue<T, const CAPACITY: usize, A>
 where
     T: bytemuck::AnyBitPattern,
+    A: Allocator,
 {
     pub(super) producer_state: ProducerState,
-    pub(super) slots: AllocatorT::Allocation<Slot<T>>,
+    pub(super) slots: A::Allocation<Slot<T>>,
 }
 
 // SAFETY: Queue uses Slot<T> which is !Sync because of UnsafeCell, but the queue itself can only be
 // used through publish/Consumer APIs both of which synchronize themselves using seqlock seq.
-unsafe impl<T: bytemuck::AnyBitPattern, const CAPACITY: usize, AllocatorT: Allocator> Sync
-    for Queue<T, CAPACITY, AllocatorT>
+unsafe impl<T, const CAPACITY: usize, A> Sync for Queue<T, CAPACITY, A>
+where
+    T: bytemuck::AnyBitPattern,
+    A: Allocator,
 {
 }
 
-impl<T, const CAPACITY: usize, AllocatorT> Queue<T, CAPACITY, AllocatorT>
+impl<T, const CAPACITY: usize, A> Queue<T, CAPACITY, A>
 where
     T: bytemuck::AnyBitPattern,
-    AllocatorT: Allocator,
+    A: Allocator,
 {
     #[inline]
     pub(super) fn publish(&self, value: T) {

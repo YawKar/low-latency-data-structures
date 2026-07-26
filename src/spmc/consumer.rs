@@ -43,14 +43,20 @@ pub enum ReadResult<T> {
 /// `Consumer` is [`Send`] but not [`Sync`]: at most one thread may call
 /// [`try_read`](Self::try_read) on a given consumer at a time. To get more
 /// consumers, request more at construction via [`new`](crate::spmc::new).
-pub struct Consumer<T: bytemuck::AnyBitPattern, const CAPACITY: usize, AllocatorT: Allocator> {
+pub struct Consumer<T, const CAPACITY: usize, A>
+where
+    T: bytemuck::AnyBitPattern,
+    A: Allocator,
+{
     state: ConsumerState,
-    inner: Arc<Queue<T, CAPACITY, AllocatorT>>,
+    inner: Arc<Queue<T, CAPACITY, A>>,
     _not_sync: PhantomData<*const ()>,
 }
 
-impl<T: bytemuck::AnyBitPattern, const CAPACITY: usize, AllocatorT: Allocator> std::fmt::Debug
-    for Consumer<T, CAPACITY, AllocatorT>
+impl<T, const CAPACITY: usize, A> std::fmt::Debug for Consumer<T, CAPACITY, A>
+where
+    T: bytemuck::AnyBitPattern,
+    A: Allocator,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Consumer")
@@ -61,11 +67,11 @@ impl<T: bytemuck::AnyBitPattern, const CAPACITY: usize, AllocatorT: Allocator> s
 }
 
 // SAFETY: It is Send on its own but we need to forbid the Sync.
-unsafe impl<T, const CAPACITY: usize, AllocatorT> Send for Consumer<T, CAPACITY, AllocatorT>
+unsafe impl<T, const CAPACITY: usize, A> Send for Consumer<T, CAPACITY, A>
 where
-    AllocatorT: Allocator,
+    A: Allocator,
     T: bytemuck::AnyBitPattern + Send,
-    AllocatorT::Allocation<T>: Send,
+    A::Allocation<Slot<T>>: Send,
 {
 }
 
@@ -78,12 +84,12 @@ mod tests {
     static_assertions::assert_not_impl_any!(Consumer<u32, 2, NeverAllocator>: Sync, Clone, Copy);
 }
 
-impl<T, const CAPACITY: usize, AllocatorT> Consumer<T, CAPACITY, AllocatorT>
+impl<T, const CAPACITY: usize, A> Consumer<T, CAPACITY, A>
 where
     T: bytemuck::AnyBitPattern,
-    AllocatorT: Allocator,
+    A: Allocator,
 {
-    pub(super) fn new(queue: Arc<Queue<T, CAPACITY, AllocatorT>>) -> Self {
+    pub(super) fn new(queue: Arc<Queue<T, CAPACITY, A>>) -> Self {
         Self {
             state: ConsumerState {
                 read_cursor: 0,

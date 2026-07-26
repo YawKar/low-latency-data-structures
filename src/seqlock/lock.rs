@@ -20,7 +20,10 @@ use crate::seqlock::writer::Writer;
 /// writer.write(42);
 /// assert_eq!(reader.read(), 42);
 /// ```
-pub fn new<T: bytemuck::AnyBitPattern>(initial_value: T) -> (Writer<T>, Reader<T>) {
+pub fn new<T>(initial_value: T) -> (Writer<T>, Reader<T>)
+where
+    T: bytemuck::AnyBitPattern,
+{
     let sl = Arc::new(SeqLock {
         seq: AtomicU64::new(0),
         data: UnsafeCell::new(initial_value),
@@ -32,7 +35,10 @@ pub fn new<T: bytemuck::AnyBitPattern>(initial_value: T) -> (Writer<T>, Reader<T
 
 /// 128 = adjacent-line prefetcher granularity, not cache line size
 #[repr(C, align(128))]
-pub(super) struct SeqLock<T: bytemuck::AnyBitPattern> {
+pub(super) struct SeqLock<T>
+where
+    T: bytemuck::AnyBitPattern,
+{
     seq: AtomicU64,
     data: UnsafeCell<T>,
 }
@@ -43,9 +49,12 @@ pub(super) struct SeqLock<T: bytemuck::AnyBitPattern> {
 // AnyBitPattern` guarantees every bit pattern materialises a valid T, so the
 // worst-case observed value is stale, never UB. The seq check around the
 // read rejects stale or torn values before they leave `Reader::read`.
-unsafe impl<T: bytemuck::AnyBitPattern> Sync for SeqLock<T> {}
+unsafe impl<T> Sync for SeqLock<T> where T: bytemuck::AnyBitPattern {}
 
-impl<T: bytemuck::AnyBitPattern> SeqLock<T> {
+impl<T> SeqLock<T>
+where
+    T: bytemuck::AnyBitPattern,
+{
     #[inline]
     pub(super) fn write(&self, value: T) {
         let s = self.seq.load(Ordering::Relaxed);

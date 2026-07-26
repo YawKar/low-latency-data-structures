@@ -28,10 +28,10 @@ fn main() {
     println!("consumer B observed: {b:?}");
 }
 
-fn collect<AllocatorT: Allocator>(
-    c: &mut spmc::Consumer<u64, 16, AllocatorT>,
-    n: usize,
-) -> Vec<u64> {
+fn collect<A>(c: &mut spmc::Consumer<u64, 16, A>, n: usize) -> Vec<u64>
+where
+    A: Allocator,
+{
     let mut seen = Vec::with_capacity(n);
     while seen.len() < n {
         match c.try_read() {
