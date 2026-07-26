@@ -1,14 +1,17 @@
 use std::marker::PhantomData;
 
+use crossbeam_utils::CachePadded;
+
 use crate::mem::Allocator;
 use crate::shim::cell::Cell;
 use crate::shim::sync::Arc;
 use crate::shim::sync::atomic::AtomicUsize;
 use crate::spsc::queue::Queue;
 
-#[repr(C, align(128))]
+pub(super) type ProducerState = CachePadded<ProducerStateInner>;
+
 #[derive(Default)]
-pub(super) struct ProducerState {
+pub(super) struct ProducerStateInner {
     pub tail: AtomicUsize,
     pub cached_head: Cell<usize>,
 }
