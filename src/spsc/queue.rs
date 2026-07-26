@@ -41,19 +41,19 @@ use crate::spsc::producer::{Producer, ProducerState};
 ///     }
 /// });
 /// ```
-pub fn new<T, const CAPACITY: usize, AllocatorT: Allocator>(
-    options: Options<AllocatorT>,
-) -> (
-    Producer<T, CAPACITY, AllocatorT>,
-    Consumer<T, CAPACITY, AllocatorT>,
-) {
+pub fn new<T, const CAPACITY: usize, A>(
+    options: Options<A>,
+) -> (Producer<T, CAPACITY, A>, Consumer<T, CAPACITY, A>)
+where
+    A: Allocator,
+{
     const {
         assert!(
             CAPACITY.is_power_of_two(),
             "Given capacity is not a power of two!"
         );
     };
-    let slots_allocation = AllocatorT::allocate(CAPACITY, options.alloc);
+    let slots_allocation = A::allocate(CAPACITY, options.alloc);
     let q = Arc::new(Queue {
         producer_state: ProducerState::default(),
         consumer_state: ConsumerState::default(),
@@ -65,13 +65,19 @@ pub fn new<T, const CAPACITY: usize, AllocatorT: Allocator>(
 }
 
 #[repr(C)]
-pub(super) struct Queue<T, const CAPACITY: usize, AllocatorT: Allocator> {
+pub(super) struct Queue<T, const CAPACITY: usize, A>
+where
+    A: Allocator,
+{
     producer_state: ProducerState,
     consumer_state: ConsumerState,
-    slots_allocation: AllocatorT::Allocation<T>,
+    slots_allocation: A::Allocation<T>,
 }
 
-impl<T, const CAPACITY: usize, AllocatorT: Allocator> Queue<T, CAPACITY, AllocatorT> {
+impl<T, const CAPACITY: usize, A> Queue<T, CAPACITY, A>
+where
+    A: Allocator,
+{
     #[inline]
     pub fn pop(&self) -> Option<T> {
         let head = self.consumer_state.head.load(atomic::Ordering::Relaxed);
@@ -145,7 +151,10 @@ impl<T, const CAPACITY: usize, AllocatorT: Allocator> Queue<T, CAPACITY, Allocat
     }
 }
 
-impl<T, const CAPACITY: usize, AllocatorT: Allocator> Drop for Queue<T, CAPACITY, AllocatorT> {
+impl<T, const CAPACITY: usize, A> Drop for Queue<T, CAPACITY, A>
+where
+    A: Allocator,
+{
     fn drop(&mut self) {
         let head = self.consumer_state.head.load(atomic::Ordering::Relaxed);
         let tail = self.producer_state.tail.load(atomic::Ordering::Relaxed);

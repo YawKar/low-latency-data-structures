@@ -8,17 +8,26 @@ use crate::seqlock::lock::SeqLock;
 /// both [`Send`] and [`Sync`]; concurrent reads do not interfere because the
 /// underlying validation protocol is wait-free for readers in the absence of
 /// a concurrent writer and lock-free in its presence.
-pub struct Reader<T: bytemuck::AnyBitPattern> {
+pub struct Reader<T>
+where
+    T: bytemuck::AnyBitPattern,
+{
     inner: Arc<SeqLock<T>>,
 }
 
-impl<T: bytemuck::AnyBitPattern> std::fmt::Debug for Reader<T> {
+impl<T> std::fmt::Debug for Reader<T>
+where
+    T: bytemuck::AnyBitPattern,
+{
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Reader").finish_non_exhaustive()
     }
 }
 
-impl<T: bytemuck::AnyBitPattern> Clone for Reader<T> {
+impl<T> Clone for Reader<T>
+where
+    T: bytemuck::AnyBitPattern,
+{
     fn clone(&self) -> Self {
         Self {
             inner: self.inner.clone(),
@@ -26,7 +35,10 @@ impl<T: bytemuck::AnyBitPattern> Clone for Reader<T> {
     }
 }
 
-impl<T: bytemuck::AnyBitPattern> Reader<T> {
+impl<T> Reader<T>
+where
+    T: bytemuck::AnyBitPattern,
+{
     pub(super) fn new(seqlock: Arc<SeqLock<T>>) -> Self {
         Self { inner: seqlock }
     }

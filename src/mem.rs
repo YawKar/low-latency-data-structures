@@ -214,7 +214,7 @@ pub mod hugepages {
         length: usize,
     }
 
-    unsafe impl<T: Send> Send for HugepageAllocation<T> {}
+    unsafe impl<T> Send for HugepageAllocation<T> where T: Send {}
 
     impl<T> Drop for HugepageAllocation<T> {
         fn drop(&mut self) {
@@ -291,7 +291,7 @@ pub mod global {
         layout: alloc::Layout,
     }
 
-    unsafe impl<T: Send> Send for GlobalAllocation<T> {}
+    unsafe impl<T> Send for GlobalAllocation<T> where T: Send {}
 
     impl<T> Drop for GlobalAllocation<T> {
         fn drop(&mut self) {
@@ -341,7 +341,7 @@ pub(crate) mod loom {
         capacity: usize,
     }
 
-    unsafe impl<T: Send> Send for LoomVecAllocation<T> {}
+    unsafe impl<T> Send for LoomVecAllocation<T> where T: Send {}
 
     impl<T> Drop for LoomVecAllocation<T> {
         fn drop(&mut self) {
