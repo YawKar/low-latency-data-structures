@@ -7,22 +7,31 @@ use crate::seqlock::lock::SeqLock;
 ///
 /// `Writer` is [`Send`] but not [`Sync`]: at most one thread may write at a
 /// time. To enforce that, the type is neither [`Clone`] nor [`Copy`].
-pub struct Writer<T: bytemuck::AnyBitPattern> {
+pub struct Writer<T>
+where
+    T: bytemuck::AnyBitPattern,
+{
     inner: Arc<SeqLock<T>>,
     // Remove possibility to share ownership
     _not_sync: PhantomData<*const ()>,
 }
 
-impl<T: bytemuck::AnyBitPattern> std::fmt::Debug for Writer<T> {
+impl<T> std::fmt::Debug for Writer<T>
+where
+    T: bytemuck::AnyBitPattern,
+{
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Writer").finish_non_exhaustive()
     }
 }
 
 // SAFETY: SeqLock<T> is Send, we just need to forbid Sync.
-unsafe impl<T: bytemuck::AnyBitPattern> Send for Writer<T> {}
+unsafe impl<T> Send for Writer<T> where T: bytemuck::AnyBitPattern {}
 
-impl<T: bytemuck::AnyBitPattern> Writer<T> {
+impl<T> Writer<T>
+where
+    T: bytemuck::AnyBitPattern,
+{
     pub(super) fn new(seqlock: Arc<SeqLock<T>>) -> Self {
         Self {
             inner: seqlock,

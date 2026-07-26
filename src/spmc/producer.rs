@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 
 use crate::mem::Allocator;
-use crate::spmc::queue::Queue;
+use crate::spmc::queue::{Queue, Slot};
 
 #[repr(C, align(128))]
 pub(super) struct ProducerState {
@@ -21,13 +21,19 @@ pub(super) struct ProducerState {
 /// oldest slot is overwritten, and any consumer that hasn't read past that
 /// slot will observe a [`ReadResult::Lapped`](crate::spmc::ReadResult::Lapped)
 /// on its next read.
-pub struct Producer<T: bytemuck::AnyBitPattern, const CAPACITY: usize, AllocatorT: Allocator> {
-    inner: Arc<Queue<T, CAPACITY, AllocatorT>>,
+pub struct Producer<T, const CAPACITY: usize, A>
+where
+    T: bytemuck::AnyBitPattern,
+    A: Allocator,
+{
+    inner: Arc<Queue<T, CAPACITY, A>>,
     _not_sync: PhantomData<*const ()>,
 }
 
-impl<T: bytemuck::AnyBitPattern, const CAPACITY: usize, AllocatorT: Allocator> std::fmt::Debug
-    for Producer<T, CAPACITY, AllocatorT>
+impl<T, const CAPACITY: usize, A> std::fmt::Debug for Producer<T, CAPACITY, A>
+where
+    T: bytemuck::AnyBitPattern,
+    A: Allocator,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Producer")
@@ -37,11 +43,11 @@ impl<T: bytemuck::AnyBitPattern, const CAPACITY: usize, AllocatorT: Allocator> s
 }
 
 // SAFETY: it is Send on its own but we need to restrict only Sync.
-unsafe impl<T, const CAPACITY: usize, AllocatorT> Send for Producer<T, CAPACITY, AllocatorT>
+unsafe impl<T, const CAPACITY: usize, A> Send for Producer<T, CAPACITY, A>
 where
-    AllocatorT: Allocator,
+    A: Allocator,
     T: bytemuck::AnyBitPattern + Send,
-    AllocatorT::Allocation<T>: Send,
+    A::Allocation<Slot<T>>: Send,
 {
 }
 
@@ -54,12 +60,12 @@ mod tests {
     static_assertions::assert_not_impl_any!(Producer<u32, 1, NeverAllocator>: Sync, Clone, Copy);
 }
 
-impl<T, const CAPACITY: usize, AllocatorT> Producer<T, CAPACITY, AllocatorT>
+impl<T, const CAPACITY: usize, A> Producer<T, CAPACITY, A>
 where
     T: bytemuck::AnyBitPattern,
-    AllocatorT: Allocator,
+    A: Allocator,
 {
-    pub(super) fn new(queue: Arc<Queue<T, CAPACITY, AllocatorT>>) -> Self {
+    pub(super) fn new(queue: Arc<Queue<T, CAPACITY, A>>) -> Self {
         Self {
             inner: queue,
             _not_sync: PhantomData,
