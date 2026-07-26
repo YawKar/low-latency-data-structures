@@ -1,5 +1,3 @@
-use std::marker::PhantomData;
-
 use crate::mem::{Allocation, Allocator};
 use crate::shim::sync::{Arc, atomic};
 use crate::spsc::builder::Options;
@@ -43,11 +41,11 @@ use crate::spsc::producer::{Producer, ProducerState};
 ///     }
 /// });
 /// ```
-pub fn new<T, const CAPACITY: usize, Alloc: Allocator>(
-    options: Options<Alloc>,
+pub fn new<T, const CAPACITY: usize, AllocatorT: Allocator>(
+    options: Options<AllocatorT>,
 ) -> (
-    Producer<T, CAPACITY, impl Allocation<T>>,
-    Consumer<T, CAPACITY, impl Allocation<T>>,
+    Producer<T, CAPACITY, AllocatorT>,
+    Consumer<T, CAPACITY, AllocatorT>,
 ) {
     const {
         assert!(
@@ -55,12 +53,11 @@ pub fn new<T, const CAPACITY: usize, Alloc: Allocator>(
             "Given capacity is not a power of two!"
         );
     };
-    let slots_allocation = Alloc::allocate(CAPACITY, options.alloc);
+    let slots_allocation = AllocatorT::allocate(CAPACITY, options.alloc);
     let q = Arc::new(Queue {
         producer_state: ProducerState::default(),
         consumer_state: ConsumerState::default(),
         slots_allocation,
-        _t: PhantomData,
     });
     let producer = Producer::new(q.clone());
     let consumer = Consumer::new(q);
@@ -68,14 +65,13 @@ pub fn new<T, const CAPACITY: usize, Alloc: Allocator>(
 }
 
 #[repr(C)]
-pub(super) struct Queue<T, const CAPACITY: usize, AllocT: Allocation<T>> {
+pub(super) struct Queue<T, const CAPACITY: usize, AllocatorT: Allocator> {
     producer_state: ProducerState,
     consumer_state: ConsumerState,
-    slots_allocation: AllocT,
-    _t: PhantomData<T>,
+    slots_allocation: AllocatorT::Allocation<T>,
 }
 
-impl<T, const CAPACITY: usize, AllocT: Allocation<T>> Queue<T, CAPACITY, AllocT> {
+impl<T, const CAPACITY: usize, AllocatorT: Allocator> Queue<T, CAPACITY, AllocatorT> {
     #[inline]
     pub fn pop(&self) -> Option<T> {
         let head = self.consumer_state.head.load(atomic::Ordering::Relaxed);
@@ -149,7 +145,7 @@ impl<T, const CAPACITY: usize, AllocT: Allocation<T>> Queue<T, CAPACITY, AllocT>
     }
 }
 
-impl<T, const CAPACITY: usize, AllocT: Allocation<T>> Drop for Queue<T, CAPACITY, AllocT> {
+impl<T, const CAPACITY: usize, AllocatorT: Allocator> Drop for Queue<T, CAPACITY, AllocatorT> {
     fn drop(&mut self) {
         let head = self.consumer_state.head.load(atomic::Ordering::Relaxed);
         let tail = self.producer_state.tail.load(atomic::Ordering::Relaxed);

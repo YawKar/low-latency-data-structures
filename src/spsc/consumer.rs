@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use crate::mem::Allocation;
+use crate::mem::Allocator;
 use crate::shim::cell::Cell;
 use crate::shim::sync::Arc;
 use crate::shim::sync::atomic::AtomicUsize;
@@ -19,13 +19,13 @@ pub(super) struct ConsumerState {
 /// [`new`](crate::spsc::new).
 /// `Consumer` is [`Send`] but not [`Sync`]: at most one thread may pop at a
 /// time.
-pub struct Consumer<T, const CAPACITY: usize, AllocT: Allocation<T>> {
-    inner: Arc<Queue<T, CAPACITY, AllocT>>,
+pub struct Consumer<T, const CAPACITY: usize, AllocatorT: Allocator> {
+    inner: Arc<Queue<T, CAPACITY, AllocatorT>>,
     _not_sync: PhantomData<*const ()>,
 }
 
-impl<T, const CAPACITY: usize, AllocT: Allocation<T>> std::fmt::Debug
-    for Consumer<T, CAPACITY, AllocT>
+impl<T, const CAPACITY: usize, AllocatorT: Allocator> std::fmt::Debug
+    for Consumer<T, CAPACITY, AllocatorT>
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Consumer")
@@ -36,13 +36,16 @@ impl<T, const CAPACITY: usize, AllocT: Allocation<T>> std::fmt::Debug
 
 // SAFETY: Consumer is Send because the underlying Queue is Send when both T
 // and the allocation are Send; PhantomData<*const ()> blocks Sync.
-unsafe impl<T: Send, const CAPACITY: usize, AllocT: Allocation<T> + Send> Send
-    for Consumer<T, CAPACITY, AllocT>
+unsafe impl<T, const CAPACITY: usize, AllocatorT> Send for Consumer<T, CAPACITY, AllocatorT>
+where
+    T: Send,
+    AllocatorT: Allocator,
+    AllocatorT::Allocation<T>: Send,
 {
 }
 
-impl<T, const CAPACITY: usize, AllocT: Allocation<T>> Consumer<T, CAPACITY, AllocT> {
-    pub(super) fn new(queue: Arc<Queue<T, CAPACITY, AllocT>>) -> Self {
+impl<T, const CAPACITY: usize, AllocatorT: Allocator> Consumer<T, CAPACITY, AllocatorT> {
+    pub(super) fn new(queue: Arc<Queue<T, CAPACITY, AllocatorT>>) -> Self {
         Self {
             inner: queue,
             _not_sync: PhantomData,
@@ -77,9 +80,9 @@ impl<T, const CAPACITY: usize, AllocT: Allocation<T>> Consumer<T, CAPACITY, Allo
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mem::test_util::NeverAlloc;
+    use crate::mem::test_util::NeverAllocator;
 
     // Shouldn't be possible to construct Arc<Consumer<T>> and then use it from different threads as it
     // will break the requirement of *Single* producer *Single* consumer queue.
-    static_assertions::assert_not_impl_any!(Consumer<u32, 0, NeverAlloc>: Sync);
+    static_assertions::assert_not_impl_any!(Consumer<u32, 0, NeverAllocator>: Sync);
 }
