@@ -8,9 +8,8 @@ use low_latency_data_structures::mem::global::GlobalAllocator;
 use low_latency_data_structures::spmc::{self, ReadResult};
 
 fn main() {
-    let (producer, consumers) =
-        spmc::new::<u64, 16, 2, GlobalAllocator>(spmc::Options::global_mlocked());
-    let [mut c1, mut c2] = consumers;
+    let (producer, mut c1) = spmc::new::<u64, 16, GlobalAllocator>(spmc::Options::global_mlocked());
+    let mut c2 = c1.clone();
 
     let producer_h = thread::spawn(move || {
         for i in 0..8 {

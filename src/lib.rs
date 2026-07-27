@@ -24,7 +24,7 @@
 //! use low_latency_data_structures::spmc::{self, new, ReadResult};
 //! use low_latency_data_structures::mem::global::GlobalAllocator;
 //!
-//! let (producer, [mut consumer]) = new::<u64, 1024, 1, GlobalAllocator>(
+//! let (producer, mut consumer) = new::<u64, 1024, GlobalAllocator>(
 //!     spmc::Options::global_mlocked(),
 //! );
 //! producer.publish(42);

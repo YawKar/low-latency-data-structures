@@ -70,8 +70,7 @@ fn main() {
     const N: u64 = 10_000_000;
     const WARMUP: u64 = 1_000_000;
 
-    let (producer, [mut consumer]) =
-        new::<u64, CAPACITY, 1, GlobalAllocator>(Options::global_mlocked());
+    let (producer, mut consumer) = new::<u64, CAPACITY, GlobalAllocator>(Options::global_mlocked());
     let barrier = Arc::new(Barrier::new(3));
     let done = Arc::new(AtomicBool::new(false));
     let clock = quanta::Clock::new();

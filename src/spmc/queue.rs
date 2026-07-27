@@ -8,8 +8,9 @@ use crate::spmc::builder::Options;
 use crate::spmc::consumer::Consumer;
 use crate::spmc::producer::{Producer, ProducerState, ProducerStateInner};
 
-/// Creates a new SPMC broadcast queue with `CAPACITY` slots and `NCONSUMERS`
-/// pre-built [`Consumer`]s.
+/// Creates a new SPMC broadcast queue with `CAPACITY` slots and a single
+/// [`Consumer`]. Additional consumers can be obtained by cloning it; each
+/// clone inherits the parent's current read cursor.
 ///
 /// `CAPACITY` must be a power of two (compile-time enforced). The queue is
 /// allocated up front and never grows. `T: AnyBitPattern` is required so
@@ -23,9 +24,10 @@ use crate::spmc::producer::{Producer, ProducerState, ProducerStateInner};
 /// use low_latency_data_structures::spmc::{self, ReadResult, new};
 /// use low_latency_data_structures::mem::global::GlobalAllocator;
 ///
-/// let (producer, [mut a, mut b]) = new::<u64, 4, 2, GlobalAllocator>(
+/// let (producer, mut a) = new::<u64, 4, GlobalAllocator>(
 ///     spmc::Options::global_mlocked(),
 /// );
+/// let mut b = a.clone();
 /// producer.publish(1);
 /// assert_eq!(a.try_read(), ReadResult::Value(1));
 /// assert_eq!(b.try_read(), ReadResult::Value(1));
@@ -40,21 +42,18 @@ use crate::spmc::producer::{Producer, ProducerState, ProducerStateInner};
 /// seq!(N in 2..20 {
 ///     {
 ///         const CAP: usize = 2usize.wrapping_pow(N);
-///         let _fail = new::<u64, { CAP - 1 }, 3, GlobalAllocator>(
+///         let _fail = new::<u64, { CAP - 1 }, GlobalAllocator>(
 ///             spmc::Options::global_mlocked(),
 ///         );
-///         let _fail = new::<u64, { CAP + 1 }, 4, GlobalAllocator>(
+///         let _fail = new::<u64, { CAP + 1 }, GlobalAllocator>(
 ///             spmc::Options::global_mlocked(),
 ///         );
 ///     }
 /// });
 /// ```
-pub fn new<T, const CAPACITY: usize, const NCONSUMERS: usize, A>(
+pub fn new<T, const CAPACITY: usize, A>(
     options: Options<A>,
-) -> (
-    Producer<T, CAPACITY, A>,
-    [Consumer<T, CAPACITY, A>; NCONSUMERS],
-)
+) -> (Producer<T, CAPACITY, A>, Consumer<T, CAPACITY, A>)
 where
     T: bytemuck::AnyBitPattern,
     A: Allocator,
@@ -94,8 +93,8 @@ where
         slots,
     });
     let producer = Producer::new(q.clone());
-    let consumers = std::array::from_fn(|_| Consumer::new(q.clone()));
-    (producer, consumers)
+    let consumer = Consumer::new(q);
+    (producer, consumer)
 }
 
 /// One cell in the SPMC ring. Carries the payload plus a sequence number the
@@ -210,9 +209,9 @@ mod tests {
     #[test]
     fn single_thread_multiple_consumers_read_messages() {
         const CAPACITY: usize = 128;
-        const NCONSUMERS: usize = 3;
-        let (producer, consumers) = new::<u64, CAPACITY, NCONSUMERS, _>(spmc_options());
-        let [mut c1, mut c2, mut c3] = consumers;
+        let (producer, mut c1) = new::<u64, CAPACITY, _>(spmc_options());
+        let mut c2 = c1.clone();
+        let mut c3 = c1.clone();
         assert_eq!(c1.try_read(), ReadResult::Empty);
         assert_eq!(c2.try_read(), ReadResult::Empty);
         assert_eq!(c3.try_read(), ReadResult::Empty);
@@ -253,7 +252,9 @@ mod tests {
         const NCONSUMERS: usize = 4;
         const N: u64 = 200_000;
 
-        let (producer, consumers) = new::<u64, CAPACITY, NCONSUMERS, _>(spmc_options());
+        let (producer, c0) = new::<u64, CAPACITY, _>(spmc_options());
+        let consumers: Vec<_> = (0..NCONSUMERS).map(|_| c0.clone()).collect();
+        drop(c0);
         let done = Arc::new(AtomicBool::new(false));
 
         let handles: Vec<_> = consumers
@@ -305,9 +306,7 @@ mod tests {
     #[test]
     fn consumer_can_be_overlapped_by_writer() {
         const CAPACITY: usize = 8;
-        const NCONSUMERS: usize = 1;
-        let (producer, consumers) = new::<usize, CAPACITY, NCONSUMERS, _>(spmc_options());
-        let [mut c1] = consumers;
+        let (producer, mut c1) = new::<usize, CAPACITY, _>(spmc_options());
         assert_eq!(c1.try_read(), ReadResult::Empty);
 
         // After this loop write_cursor = 8. First try_read below loads it into
@@ -337,8 +336,9 @@ mod tests_dhat {
     #[test]
     fn hot_path_zero_allocations() {
         let _profiler = dhat::Profiler::builder().testing().build();
-        let (producer, [mut c1, mut c2, mut c3]) =
-            new::<u64, 1024, 3, GlobalAllocator>(Options::global_mlocked());
+        let (producer, mut c1) = new::<u64, 1024, GlobalAllocator>(Options::global_mlocked());
+        let mut c2 = c1.clone();
+        let mut c3 = c1.clone();
 
         // Warm up to absorb any one-time platform allocations: lazy symbol
         // resolution in the dynamic linker, libstd TLS init, debug-build

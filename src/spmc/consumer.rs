@@ -9,6 +9,7 @@ use crate::spmc::queue::{Queue, Slot};
 
 pub(super) type ConsumerState = CachePadded<ConsumerStateInner>;
 
+#[derive(Clone)]
 pub(super) struct ConsumerStateInner {
     read_cursor: usize,
     cached_write_cursor: usize,
@@ -45,7 +46,9 @@ pub enum ReadResult<T> {
 ///
 /// `Consumer` is [`Send`] but not [`Sync`]: at most one thread may call
 /// [`try_read`](Self::try_read) on a given consumer at a time. To get more
-/// consumers, request more at construction via [`new`](crate::spmc::new).
+/// consumers, clone this one. Each clone inherits the parent's current read
+/// cursor at the time of the clone, so a clone made after the parent has
+/// read `N` values will not re-observe those `N` values.
 pub struct Consumer<T, const CAPACITY: usize, A>
 where
     T: bytemuck::AnyBitPattern,
@@ -78,13 +81,29 @@ where
 {
 }
 
+// An ordinary `#[derive(Clone)]` adds additional requirements such as `A: Clone` which is
+// actually irrelevant as we only use [`Allocator::Allocation<T>`].
+impl<T, const CAPACITY: usize, A> Clone for Consumer<T, CAPACITY, A>
+where
+    T: bytemuck::AnyBitPattern,
+    A: Allocator,
+{
+    fn clone(&self) -> Self {
+        Self {
+            state: self.state.clone(),
+            inner: self.inner.clone(),
+            _not_sync: self._not_sync.clone(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::mem::test_util::NeverAllocator;
 
-    static_assertions::assert_impl_all!(Consumer<u32, 2, NeverAllocator>: Send);
-    static_assertions::assert_not_impl_any!(Consumer<u32, 2, NeverAllocator>: Sync, Clone, Copy);
+    static_assertions::assert_impl_all!(Consumer<u32, 2, NeverAllocator>: Send, Clone);
+    static_assertions::assert_not_impl_any!(Consumer<u32, 2, NeverAllocator>: Sync, Copy);
 }
 
 impl<T, const CAPACITY: usize, A> Consumer<T, CAPACITY, A>
@@ -130,7 +149,7 @@ where
     /// use low_latency_data_structures::spmc::{self, ReadResult, new};
     /// use low_latency_data_structures::mem::global::GlobalAllocator;
     ///
-    /// let (producer, [mut consumer]) = new::<u64, 16, 1, GlobalAllocator>(
+    /// let (producer, mut consumer) = new::<u64, 16, GlobalAllocator>(
     ///     spmc::Options::global_mlocked(),
     /// );
     /// assert_eq!(consumer.try_read(), ReadResult::Empty);

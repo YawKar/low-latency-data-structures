@@ -33,9 +33,9 @@ fn smoke_seqlock() {
 
 fn smoke_spmc() {
     println!("smoke_spmc...");
-    let (producer, consumers) =
-        spmc::new::<i32, 128, 2, GlobalAllocator>(spmc::Options::global_mlocked());
-    let [mut c1, mut c2] = consumers;
+    let (producer, mut c1) =
+        spmc::new::<i32, 128, GlobalAllocator>(spmc::Options::global_mlocked());
+    let mut c2 = c1.clone();
     assert_eq!(c1.try_read(), ReadResult::Empty);
     assert_eq!(c2.try_read(), ReadResult::Empty);
     producer.publish(123);
