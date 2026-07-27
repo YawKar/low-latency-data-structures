@@ -91,9 +91,9 @@ macro_rules! run_one {
         // Build the queue on a thread with a generous stack so that very
         // large CAPACITY values do not blow the main stack during the
         // intermediate `[Slot; CAPACITY]` construction inside `new()`.
-        let (producer, [mut consumer]) = thread::Builder::new()
+        let (producer, mut consumer) = thread::Builder::new()
             .stack_size(BUILDER_STACK_BYTES)
-            .spawn(|| new::<u64, CAPACITY, 1, GlobalAllocator>(Options::global_mlocked()))
+            .spawn(|| new::<u64, CAPACITY, GlobalAllocator>(Options::global_mlocked()))
             .unwrap()
             .join()
             .unwrap();

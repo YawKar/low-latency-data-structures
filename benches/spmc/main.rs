@@ -26,8 +26,7 @@ fn single_thread_ping_pong(c: &mut Criterion) {
         {
             let capacity_label = CAPACITY;
             g.bench_function(format!("capacity={capacity_label}"), |b| {
-                let (p, c) = new::<_, CAPACITY, 1, GlobalAllocator>(Options::global_mlocked());
-                let [mut c] = c;
+                let (p, mut c) = new::<_, CAPACITY, GlobalAllocator>(Options::global_mlocked());
                 b.iter(|| {
                     black_box(p.publish(black_box(42)));
                     let _ = black_box(c.try_read());

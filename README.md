@@ -16,7 +16,7 @@ market-data fan-out, low-jitter audio).
 | Module | Pattern | Send/Sync | Allocation |
 | --- | --- | --- | --- |
 | [`spsc`] | bounded FIFO, 1 producer, 1 consumer | `Send`, `!Sync` | up-front, optional hugepages |
-| [`spmc`] | bounded broadcast, 1 producer, `N` consumers | `Send`, `!Sync` | up-front |
+| [`spmc`] | bounded broadcast, 1 producer, cloneable consumers | `Send`, `!Sync` | up-front |
 | [`seqlock`] | single-writer, multi-reader cell | reader is `Send + Sync`, writer is `Send` | up-front |
 
 All primitives are bounded with a compile-time `CAPACITY` that must be a power
@@ -47,8 +47,9 @@ assert_eq!(consumer.pop(), Some(42));
 
 // SPMC broadcast
 use low_latency_data_structures::spmc::{self, ReadResult};
-let (producer, [mut c1, mut c2]) =
-    spmc::new::<u64, 1024, 2, GlobalAllocator>(spmc::Options::global_mlocked());
+let (producer, mut c1) =
+    spmc::new::<u64, 1024, GlobalAllocator>(spmc::Options::global_mlocked());
+let mut c2 = c1.clone();
 producer.publish(42);
 assert_eq!(c1.try_read(), ReadResult::Value(42));
 assert_eq!(c2.try_read(), ReadResult::Value(42));
