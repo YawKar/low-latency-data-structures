@@ -15,7 +15,7 @@ pub(super) struct ProducerStateInner {
 
 /// The publishing handle of an SPMC broadcast queue.
 ///
-/// Created together with its [`Consumer`](crate::spmc::Consumer)s by
+/// Created together with its [`Consumer`](crate::spmc::Consumer) by
 /// [`new`](crate::spmc::new). A `Producer` is [`Send`] but not [`Sync`]:
 /// at most one thread may publish at a time. To enforce that, the type is
 /// neither [`Clone`] nor [`Copy`].
@@ -88,7 +88,7 @@ where
     /// use low_latency_data_structures::spmc::{self, ReadResult, new};
     /// use low_latency_data_structures::mem::global::GlobalAllocator;
     ///
-    /// let (producer, [mut consumer]) = new::<u64, 16, 1, GlobalAllocator>(
+    /// let (producer, mut consumer) = new::<u64, 16, GlobalAllocator>(
     ///     spmc::Options::global_mlocked(),
     /// );
     /// producer.publish(42);

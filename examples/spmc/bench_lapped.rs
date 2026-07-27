@@ -87,8 +87,7 @@ fn measure(
     producer_core: core_affinity::CoreId,
     consumer_core: core_affinity::CoreId,
 ) -> Out {
-    let (producer, [mut consumer]) =
-        new::<u64, CAPACITY, 1, GlobalAllocator>(Options::global_mlocked());
+    let (producer, mut consumer) = new::<u64, CAPACITY, GlobalAllocator>(Options::global_mlocked());
     let barrier = Arc::new(Barrier::new(3));
     let done = Arc::new(AtomicBool::new(false));
 
