@@ -537,7 +537,7 @@ dependencies = [
 
 [[package]]
 name = "low-latency-data-structures"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "anyhow",
  "bon",
