@@ -25,6 +25,8 @@
             nativeBuildInputs = with pkgs; [
               bashInteractive
               rustPlatform.bindgenHook
+              pkg-config
+              openssl
               ((rust-bin.fromRustupToolchainFile ./rust-toolchain.toml).override {
                 extensions = [
                   "rust-src"

@@ -13,6 +13,7 @@ init:
     cargo install cargo-run-bin
     cargo bin -i
     cargo install cargo-show-asm
+    cargo install cargo-dylint dylint-link
     cargo check --all-targets --no-default-features
     cargo check --all-targets --features tests_basic
     cargo check --tests --no-default-features --features tests_loom
