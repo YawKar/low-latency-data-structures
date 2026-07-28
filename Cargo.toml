@@ -28,7 +28,6 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [package.metadata.bin]
 rustfmt-unstable = { version = "^1.0.0" }
-cargo-show-asm = { version = "^0.2.61" }
 
 [lints.rust]
 missing_docs = "warn"
