@@ -33,6 +33,7 @@
               })
               perf
               heaptrack
+              git-cliff
               nixfmt
               statix
               yamlfmt
