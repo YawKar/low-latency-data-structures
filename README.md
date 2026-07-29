@@ -32,7 +32,7 @@ read with seq-number validation, so the value type must implement
 
 ```toml
 [dependencies]
-low-latency-data-structures = "=0.0.5"
+low-latency-data-structures = "=0.0.6"
 ```
 
 ```rust
