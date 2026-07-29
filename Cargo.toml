@@ -1,6 +1,6 @@
 [package]
 name = "low-latency-data-structures"
-version = "0.0.4"
+version = "0.0.5"
 edition = "2024"
 rust-version = "1.95"
 authors = ["yawkar <yawkarpov@gmail.com>"]
@@ -19,6 +19,7 @@ include = [
     "examples/seqlock/hello.rs",
     "Cargo.toml",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE",
 ]
 
