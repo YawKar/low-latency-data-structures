@@ -183,8 +183,11 @@ _prepare-release: _pre-publish-checks
     fi
 
     # --- regenerate changelog and commit it as the release commit ---
+    # No --unreleased: cliff walks the full git log and rebuilds the entire
+    # CHANGELOG.md, so past release sections are preserved. --tag labels the
+    # currently-unreleased range as $tag. Idempotent across reruns.
     echo "regenerating CHANGELOG.md for $tag..."
-    git cliff --unreleased --tag "$tag" -o CHANGELOG.md
+    git cliff --tag "$tag" -o CHANGELOG.md
     git add CHANGELOG.md
     # --allow-empty: on a rerun where CHANGELOG.md happens to be identical,
     # we still want the release commit as an anchor for the tag.
