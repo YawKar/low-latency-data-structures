@@ -4,6 +4,7 @@
 
 - Remove cargo-show-asm from cargo bin
 - Add git-cliff and conventional commits
+- Force CHANGELOG.md gen before publish
 ## [0.0.4] - 2026-07-27
 
 ### 🚜 Refactor

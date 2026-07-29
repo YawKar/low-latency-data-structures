@@ -66,9 +66,10 @@ build-debug: (build "")
 publish-dry-run:
     cargo publish --dry-run
 
-# Publish to crates.io, then tag and push vX.Y.Z. Refuses if the working tree is dirty, the tag already exists, or the version is already on crates.io.
+# Gets the name of the package
 [group("Packaging")]
-publish:
+[private]
+_get-name:
     #!/usr/bin/env bash
     set -euo pipefail
 
@@ -79,6 +80,35 @@ publish:
         *@*) name="${remainder%@*}"; version="${remainder##*@}" ;;
         *)   version="$remainder"; before="${pkgid%#*}"; name="${before##*/}" ;;
     esac
+    echo "$name"
+
+# Gets the version of the package
+[group("Packaging")]
+[private]
+_get-version:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    # --- extract crate name + version from Cargo.toml via cargo pkgid ---
+    pkgid=$(cargo pkgid)
+    remainder="${pkgid##*#}"
+    case "$remainder" in
+        *@*) name="${remainder%@*}"; version="${remainder##*@}" ;;
+        *)   version="$remainder"; before="${pkgid%#*}"; name="${before##*/}" ;;
+    esac
+    echo "$version"
+
+# Checks that: working tree is clean, we're on main synced with origin,
+# the tag is either absent or already points at HEAD (retry mode), and
+# crates.io doesn't already have the given version.
+[group("Packaging")]
+[private]
+_pre-publish-checks:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    name=$({{ just_executable() }} _get-name)
+    version=$({{ just_executable() }} _get-version)
     tag="v$version"
 
     # --- pre-flight: clean working tree ---
@@ -88,14 +118,38 @@ publish:
         exit 1
     fi
 
-    # --- pre-flight: tag must not already exist locally ---
-    if git rev-parse -q --verify "refs/tags/$tag" >/dev/null 2>&1; then
-        echo "ERROR: local git tag $tag already exists." >&2
-        echo "       Bump the version in Cargo.toml, or delete the stale tag with: git tag -d $tag" >&2
+    # --- pre-flight: must be on main ---
+    branch=$(git rev-parse --abbrev-ref HEAD)
+    if [ "$branch" != "main" ]; then
+        echo "ERROR: not on main (current branch: $branch)." >&2
+        echo "       Releases are cut from main only." >&2
         exit 1
     fi
 
+    # --- pre-flight: main must be in sync with origin/main ---
+    echo "fetching origin/main..."
+    git fetch --quiet origin main
+    if [ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]; then
+        echo "ERROR: local main is not in sync with origin/main." >&2
+        echo "       Pull or rebase before releasing so the release commit is a" >&2
+        echo "       clean fast-forward on top of origin/main." >&2
+        exit 1
+    fi
+
+    # --- pre-flight: tag must be absent OR already at HEAD (retry-after-failure) ---
+    if git rev-parse -q --verify "refs/tags/$tag" >/dev/null 2>&1; then
+        tagged=$(git rev-parse "refs/tags/$tag^{commit}")
+        head=$(git rev-parse HEAD)
+        if [ "$tagged" != "$head" ]; then
+            echo "ERROR: local git tag $tag already exists but does not point at HEAD." >&2
+            echo "       Bump the version in Cargo.toml, or delete the stale tag with: git tag -d $tag" >&2
+            exit 1
+        fi
+        echo "note: tag $tag already at HEAD (retry mode; tag/push step will be skipped)."
+    fi
+
     # --- pre-flight: version must not already be on crates.io ---
+    # TODO: parameterize over github.com, try to use metadata from the Cargo.toml
     echo "checking crates.io for $name v$version..."
     status=$(curl -sS -A "just-publish ($name; https://github.com/YawKar/low-latency-data-structures)" \
         -o /dev/null -w '%{http_code}' \
@@ -108,16 +162,55 @@ publish:
         echo "WARN: crates.io returned HTTP $status for the version probe; proceeding anyway." >&2
     fi
 
-    # --- publish (irreversible from here onwards) ---
+# Regenerate CHANGELOG.md, create the release commit + tag, and push branch
+# and tag to origin atomically. No-op if the tag already points at HEAD (a
+# `just publish` retry after a `cargo publish` failure).
+[group("Packaging")]
+[private]
+_prepare-release: _pre-publish-checks
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    name=$({{ just_executable() }} _get-name)
+    version=$({{ just_executable() }} _get-version)
+    tag="v$version"
+
+    # Retry mode: tag already at HEAD from a prior partial run.
+    if git rev-parse -q --verify "refs/tags/$tag" >/dev/null 2>&1 \
+        && [ "$(git rev-parse "refs/tags/$tag^{commit}")" = "$(git rev-parse HEAD)" ]; then
+        echo "skipping tag/push: $tag already prepared."
+        exit 0
+    fi
+
+    # --- regenerate changelog and commit it as the release commit ---
+    echo "regenerating CHANGELOG.md for $tag..."
+    git cliff --unreleased --tag "$tag" -o CHANGELOG.md
+    git add CHANGELOG.md
+    # --allow-empty: on a rerun where CHANGELOG.md happens to be identical,
+    # we still want the release commit as an anchor for the tag.
+    git commit --allow-empty -m "chore(release): prepare for $tag"
+
+    # --- tag and push branch + tag atomically ---
+    # --atomic ensures we don't end up with only one of the two refs pushed.
+    echo "tagging $tag and pushing branch + tag to origin..."
+    git tag -a "$tag" -m "$tag"
+    git push --atomic origin HEAD "$tag"
+
+    echo "done: $tag pushed with release commit."
+
+# Cut a new release: pre-checks, regenerate CHANGELOG.md, commit, tag, push branch + tag to origin, then `cargo publish`. Idempotent on retry after a `cargo publish` failure.
+[group("Packaging")]
+publish: _prepare-release
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    name=$({{ just_executable() }} _get-name)
+    version=$({{ just_executable() }} _get-version)
+
     echo "publishing $name v$version to crates.io..."
     cargo publish
 
-    # --- tag and push ---
-    echo "tagging $tag and pushing to origin..."
-    git tag -a "$tag" -m "$tag"
-    git push origin "$tag"
-
-    echo "done: $name v$version published, tag $tag pushed."
+    echo "done: crate $name v$version published"
 
 [group("Debug & Profiling")]
 heaptrack-release binary:
