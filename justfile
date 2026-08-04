@@ -440,10 +440,26 @@ unsetup-cores cores:
 bench-spsc-micro:
     cargo bench --no-default-features --bench spsc
 
-# Handoff benchmark. Measures latency from the push to the pop of the item.
+# Handoff latency (push->pop). impl selects the SPSC crate: ours|rtrb|ringbuf|heapless|nexus|crossbeam-channel|flume|std-mpsc. Per-impl features are auto-added.
 [group("Benches: SPSC")]
-bench-spsc-handoff cores:
-    sudo bash -c "ulimit -l 32000 && cargo build --release --features _bench_utils --example spsc_bench_handoff && taskset -c {{ cores }} cargo run --release --features _bench_utils --example spsc_bench_handoff"
+bench-spsc-handoff cores impl="ours":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    features="_bench_utils"
+    case "{{ impl }}" in
+        ours) ;;
+        rtrb) features="$features,_bench_rtrb" ;;
+        ringbuf) features="$features,_bench_ringbuf" ;;
+        heapless) features="$features,_bench_heapless" ;;
+        nexus) features="$features,_bench_nexus" ;;
+        crossbeam-channel) features="$features,_bench_cbchan" ;;
+        flume) features="$features,_bench_flume" ;;
+        std-mpsc) features="$features,_bench_stdmpsc" ;;
+        *) echo "unknown impl: {{ impl }} (available: ours, rtrb, ringbuf, heapless, nexus, crossbeam-channel, flume, std-mpsc)" >&2; exit 1 ;;
+    esac
+    sudo -E bash -c "ulimit -l 32000 && \
+        BENCH_IMPL={{ impl }} cargo build --release --features $features --example spsc_bench_handoff && \
+        BENCH_IMPL={{ impl }} taskset -c {{ cores }} cargo run --release --features $features --example spsc_bench_handoff"
 
 # Throttled-producer offered-load sweep with coordinated-omission correction.
 # Pass env through sudo: `BENCH_DEBUG=1 just bench-spsc-throttled 7,8` works

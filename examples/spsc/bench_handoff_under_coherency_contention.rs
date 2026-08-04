@@ -2,6 +2,17 @@
 //! pops and records `now - ts`. Relies on invariant_tsc + nonstop_tsc being
 //! synchronized across cores on the same socket (preflight checks this).
 //!
+//! Impl selection: `BENCH_IMPL=<name>` picks which SPSC to bench.
+//! Available names depend on cargo features:
+//!   - `ours`               (default; always available under `_bench_utils`)
+//!   - `rtrb`               (requires `--features _bench_rtrb`)
+//!   - `ringbuf`            (requires `--features _bench_ringbuf`)
+//!   - `heapless`           (requires `--features _bench_heapless`)
+//!   - `nexus`              (requires `--features _bench_nexus`)
+//!   - `crossbeam-channel`  (requires `--features _bench_cbchan`)  WARN: MPMC-as-SPSC
+//!   - `flume`              (requires `--features _bench_flume`)   WARN: MPMC-as-SPSC
+//!   - `std-mpsc`           (requires `--features _bench_stdmpsc`) WARN: mutex+condvar
+//!
 //! Required environment:
 //! - Kernel cmdline:
 //!     isolcpus=<P>,<C> nohz_full=<P>,<C> rcu_nocbs=<P>,<C>
@@ -22,158 +33,61 @@
 //!     "processor.max_cstate=0"
 //!   ];
 //!
-use std::hint::spin_loop;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Barrier};
-use std::thread;
-
-use hdrhistogram::Histogram;
-use low_latency_data_structures::bench::tsc::rdtscp;
-use low_latency_data_structures::bench::{loc, preflight};
-use low_latency_data_structures::mem::global::GlobalAllocator;
-use low_latency_data_structures::spsc::{Options, new};
-
-fn preflight(used_cores: &[usize]) {
-    let mut r = preflight::PreflightReport::default();
-    preflight::release_build(&mut r);
-    preflight::cores_online(&mut r, used_cores);
-    preflight::cores_isolated(&mut r, used_cores);
-    preflight::cores_nohz_full(&mut r, used_cores);
-    preflight::cores_performance_governor(&mut r, used_cores);
-    preflight::turbo_disabled(&mut r);
-    preflight::cores_distinct_physical(&mut r, used_cores);
-    preflight::cores_smt_siblings_quiet(&mut r, used_cores);
-    preflight::cores_share_l3(&mut r, used_cores);
-    preflight::tsc_invariant_and_nonstop(&mut r);
-    r.finish();
-}
+use low_latency_data_structures::bench::harness::TwoCoreCtx;
+#[cfg(feature = "_bench_cbchan")]
+use low_latency_data_structures::bench::harness::adapters::cbchan_spsc::CbChanSpsc;
+#[cfg(feature = "_bench_flume")]
+use low_latency_data_structures::bench::harness::adapters::flume_spsc::FlumeSpsc;
+#[cfg(feature = "_bench_heapless")]
+use low_latency_data_structures::bench::harness::adapters::heapless_spsc::HeaplessSpsc;
+#[cfg(feature = "_bench_nexus")]
+use low_latency_data_structures::bench::harness::adapters::nexus_spsc::NexusSpsc;
+use low_latency_data_structures::bench::harness::adapters::ours_spsc::OursSpsc;
+#[cfg(feature = "_bench_ringbuf")]
+use low_latency_data_structures::bench::harness::adapters::ringbuf_spsc::RingbufSpsc;
+#[cfg(feature = "_bench_rtrb")]
+use low_latency_data_structures::bench::harness::adapters::rtrb_spsc::RtrbSpsc;
+#[cfg(feature = "_bench_stdmpsc")]
+use low_latency_data_structures::bench::harness::adapters::stdmpsc_spsc::StdMpscSpsc;
+use low_latency_data_structures::bench::harness::spsc::{SpscHandoffCfg, run_spsc_handoff};
 
 fn main() {
-    let cores = core_affinity::get_core_ids().expect("expected to get list of available cores");
-    assert!(
-        cores.len() >= 2,
-        "need at least 2 separate cores for this benchmark"
-    );
-    let producer_core = cores[0];
-    let consumer_core = cores[1];
-    let used_cpu_ids = [producer_core.id, consumer_core.id];
-    preflight(&used_cpu_ids);
+    let ctx = TwoCoreCtx::discover_and_preflight();
+    let cfg = SpscHandoffCfg::default();
 
-    unsafe {
-        let rc = libc::mlockall(libc::MCL_CURRENT | libc::MCL_FUTURE);
-        assert_eq!(rc, 0, "mlockall failed (need CAP_IPC_LOCK or sudo)");
-    }
-
-    // Capacity 1 keeps the queue at depth 0 or 1, so each measurement reflects
-    // pure handoff (push -> pop), not in-queue residence time.
+    // Capacity 1 keeps the queue at depth 0 or 1, so each measurement
+    // reflects pure handoff (push -> pop), not in-queue residence time.
     const CAPACITY: usize = 1;
-    const N: u64 = 10_000_000;
-    const WARMUP: u64 = 1_000_000;
 
-    let (producer, consumer) = new::<u64, CAPACITY, GlobalAllocator>(Options::global_mlocked());
-    let barrier = Arc::new(Barrier::new(3));
-    let done = Arc::new(AtomicBool::new(false));
-    let clock = quanta::Clock::new();
-
-    let loc_before = loc::read(&used_cpu_ids);
-
-    let cthread = {
-        let barrier = barrier.clone();
-        let done = done.clone();
-        thread::spawn(move || -> Histogram<u64> {
-            assert!(
-                core_affinity::set_for_current(consumer_core),
-                "failed to set core affinity for consumer: desired core: {consumer_core:?}"
-            );
-            let actual = unsafe { libc::sched_getcpu() };
-            assert_eq!(
-                actual, consumer_core.id as i32,
-                "consumer not pinned where requested"
-            );
-
-            let mut hist = Histogram::<u64>::new(3).unwrap();
-            let mut seen: u64 = 0;
-            barrier.wait();
-            loop {
-                while let Some(ts) = consumer.pop() {
-                    let now = rdtscp();
-                    if seen >= WARMUP {
-                        // wrapping_sub guards against rare cross-core TSC skew;
-                        // record() will reject zero/wraparound silently via ok().
-                        let _ = hist.record(now.wrapping_sub(ts));
-                    }
-                    seen += 1;
-                }
-                if done.load(Ordering::Acquire) {
-                    // Producer's `done` Release happens-after its last push, so
-                    // any items still in the queue are visible now. Drain.
-                    while let Some(ts) = consumer.pop() {
-                        let now = rdtscp();
-                        if seen >= WARMUP {
-                            let _ = hist.record(now.wrapping_sub(ts));
-                        }
-                        seen += 1;
-                    }
-                    break;
-                }
-                spin_loop();
-            }
-            hist
-        })
-    };
-
-    let pthread = {
-        let barrier = barrier.clone();
-        let done = done.clone();
-        thread::spawn(move || {
-            assert!(
-                core_affinity::set_for_current(producer_core),
-                "failed to set core affinity for producer: desired core: {producer_core:?}"
-            );
-            let actual = unsafe { libc::sched_getcpu() };
-            assert_eq!(
-                actual, producer_core.id as i32,
-                "producer not pinned where requested"
-            );
-
-            barrier.wait();
-            for _ in 0..N {
-                // Refresh `ts` on every push attempt so the recorded value
-                // reflects the moment the slot was actually published, not the
-                // moment we first noticed the queue was full.
-                loop {
-                    let ts = rdtscp();
-                    if producer.push(ts).is_none() {
-                        break;
-                    }
-                    spin_loop();
-                }
-            }
-            done.store(true, Ordering::Release);
-        })
-    };
-
-    barrier.wait();
-    pthread.join().unwrap();
-    let hist = cthread.join().unwrap();
-    let loc_after = loc::read(&used_cpu_ids);
-
-    let report = |label: &str, raw: u64| {
-        let ns = clock.delta_as_nanos(0, raw);
-        println!("  {label:<6} {raw:>7} cycles ({ns:>5} ns)");
-    };
-    report("p50", hist.value_at_quantile(0.50));
-    report("p90", hist.value_at_quantile(0.90));
-    report("p99", hist.value_at_quantile(0.99));
-    report("p99.9", hist.value_at_quantile(0.999));
-    report("max", hist.max());
-
-    println!();
-    println!("  Local timer interrupts during run (per cpu, nohz_full should keep these near 0):");
-    for (i, &cpu) in used_cpu_ids.iter().enumerate() {
-        match (loc_before[i], loc_after[i]) {
-            (Some(b), Some(a)) => println!("    cpu{cpu:>2}: +{}", a.saturating_sub(b)),
-            _ => println!("    cpu{cpu:>2}: unreadable"),
+    let impl_name = std::env::var("BENCH_IMPL").unwrap_or_else(|_| "ours".to_string());
+    let report = match impl_name.as_str() {
+        "ours" => run_spsc_handoff::<OursSpsc<u64, CAPACITY>, CAPACITY>(&ctx, cfg),
+        #[cfg(feature = "_bench_rtrb")]
+        "rtrb" => run_spsc_handoff::<RtrbSpsc<u64, CAPACITY>, CAPACITY>(&ctx, cfg),
+        #[cfg(feature = "_bench_ringbuf")]
+        "ringbuf" => run_spsc_handoff::<RingbufSpsc<u64, CAPACITY>, CAPACITY>(&ctx, cfg),
+        #[cfg(feature = "_bench_heapless")]
+        "heapless" => {
+            run_spsc_handoff::<HeaplessSpsc<u64, CAPACITY, { CAPACITY + 1 }>, CAPACITY>(&ctx, cfg)
         }
-    }
+        #[cfg(feature = "_bench_nexus")]
+        "nexus" => run_spsc_handoff::<NexusSpsc<u64, CAPACITY>, CAPACITY>(&ctx, cfg),
+        #[cfg(feature = "_bench_cbchan")]
+        "crossbeam-channel" => run_spsc_handoff::<CbChanSpsc<u64, CAPACITY>, CAPACITY>(&ctx, cfg),
+        #[cfg(feature = "_bench_flume")]
+        "flume" => run_spsc_handoff::<FlumeSpsc<u64, CAPACITY>, CAPACITY>(&ctx, cfg),
+        #[cfg(feature = "_bench_stdmpsc")]
+        "std-mpsc" => run_spsc_handoff::<StdMpscSpsc<u64, CAPACITY>, CAPACITY>(&ctx, cfg),
+        other => panic!(
+            "unknown BENCH_IMPL={other:?}. Available: 'ours' (always), \
+             'rtrb' (requires --features _bench_rtrb), \
+             'ringbuf' (requires --features _bench_ringbuf), \
+             'heapless' (requires --features _bench_heapless), \
+             'nexus' (requires --features _bench_nexus), \
+             'crossbeam-channel' (requires --features _bench_cbchan), \
+             'flume' (requires --features _bench_flume), \
+             'std-mpsc' (requires --features _bench_stdmpsc)."
+        ),
+    };
+    report.print(&ctx.clock);
 }
