@@ -5,7 +5,7 @@
 
 use std::marker::PhantomData;
 
-use flume::{Receiver, Sender, TryRecvError, TrySendError, bounded};
+use flume::{Receiver, Sender, TrySendError, bounded};
 
 use crate::bench::harness::spsc::{SpscBench, SpscCons, SpscProd};
 
@@ -37,9 +37,6 @@ impl<T: Send> SpscProd<T> for Sender<T> {
 impl<T: Send> SpscCons<T> for Receiver<T> {
     #[inline]
     fn try_pop(&mut self) -> Option<T> {
-        match self.try_recv() {
-            Ok(v) => Some(v),
-            Err(TryRecvError::Empty | TryRecvError::Disconnected) => None,
-        }
+        self.try_recv().ok()
     }
 }

@@ -9,9 +9,12 @@
 //! Adapters for external crates are gated behind per-crate features
 //! (`_bench_rtrb`, etc.) so `_bench_utils` alone stays dep-light.
 
+use std::time::Duration;
+
 use core_affinity::CoreId;
 
 use crate::bench::preflight;
+use crate::bench::tsc::calibrate_hz;
 
 pub mod adapters;
 pub mod report;
@@ -31,6 +34,9 @@ pub struct TwoCoreCtx {
     pub consumer_core: CoreId,
     /// TSC-backed clock used by `LatencyReport::print` to render nanoseconds.
     pub clock: quanta::Clock,
+    /// Calibrated TSC frequency (Hz). Used by bench cores that need to compute
+    /// per-item schedules in TSC cycles (e.g. throttled offered-load sweeps).
+    pub tsc_hz: u64,
 }
 
 impl TwoCoreCtx {
@@ -47,10 +53,15 @@ impl TwoCoreCtx {
         let used = [producer_core.id, consumer_core.id];
         Self::preflight(&used);
         Self::mlockall();
+        // 200ms on an isolated core gets well under 1ppm, far below SMI-class
+        // noise. Long enough for throttled-sweep schedule math to stay within
+        // one TSC tick over 10^8 items.
+        let tsc_hz = calibrate_hz(Duration::from_millis(200));
         Self {
             producer_core,
             consumer_core,
             clock: quanta::Clock::new(),
+            tsc_hz,
         }
     }
 

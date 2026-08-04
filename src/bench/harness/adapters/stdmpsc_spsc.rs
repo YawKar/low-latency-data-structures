@@ -7,7 +7,7 @@
 //! is a "stdlib baseline" comparison, not a fair peer.
 
 use std::marker::PhantomData;
-use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, TrySendError, sync_channel};
+use std::sync::mpsc::{Receiver, SyncSender, TrySendError, sync_channel};
 
 use crate::bench::harness::spsc::{SpscBench, SpscCons, SpscProd};
 
@@ -40,9 +40,6 @@ impl<T: Send> SpscProd<T> for SyncSender<T> {
 impl<T: Send> SpscCons<T> for Receiver<T> {
     #[inline]
     fn try_pop(&mut self) -> Option<T> {
-        match self.try_recv() {
-            Ok(v) => Some(v),
-            Err(TryRecvError::Empty | TryRecvError::Disconnected) => None,
-        }
+        self.try_recv().ok()
     }
 }

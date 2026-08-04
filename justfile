@@ -461,12 +461,26 @@ bench-spsc-handoff cores impl="ours":
         BENCH_IMPL={{ impl }} cargo build --release --features $features --example spsc_bench_handoff && \
         BENCH_IMPL={{ impl }} taskset -c {{ cores }} cargo run --release --features $features --example spsc_bench_handoff"
 
-# Throttled-producer offered-load sweep with coordinated-omission correction.
-# Pass env through sudo: `BENCH_DEBUG=1 just bench-spsc-throttled 7,8` works
-# because justfile recipes inherit env, then `sudo -E` forwards it.
+# Throttled-producer offered-load sweep with CO correction. impl selects the SPSC crate: ours|rtrb|ringbuf|heapless|nexus|crossbeam-channel|flume|std-mpsc. Per-impl features are auto-added. BENCH_DEBUG=1 captures system latency; BENCH_RATES=r1,r2,... overrides the sweep.
 [group("Benches: SPSC")]
-bench-spsc-throttled cores:
-    sudo -E bash -c "ulimit -l 32000 && cargo build --release --features _bench_utils --example spsc_bench_throttled && taskset -c {{ cores }} cargo run --release --features _bench_utils --example spsc_bench_throttled"
+bench-spsc-throttled cores impl="ours":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    features="_bench_utils"
+    case "{{ impl }}" in
+        ours) ;;
+        rtrb) features="$features,_bench_rtrb" ;;
+        ringbuf) features="$features,_bench_ringbuf" ;;
+        heapless) features="$features,_bench_heapless" ;;
+        nexus) features="$features,_bench_nexus" ;;
+        crossbeam-channel) features="$features,_bench_cbchan" ;;
+        flume) features="$features,_bench_flume" ;;
+        std-mpsc) features="$features,_bench_stdmpsc" ;;
+        *) echo "unknown impl: {{ impl }} (available: ours, rtrb, ringbuf, heapless, nexus, crossbeam-channel, flume, std-mpsc)" >&2; exit 1 ;;
+    esac
+    sudo -E bash -c "ulimit -l 32000 && \
+        BENCH_IMPL={{ impl }} cargo build --release --features $features --example spsc_bench_throttled && \
+        BENCH_IMPL={{ impl }} taskset -c {{ cores }} cargo run --release --features $features --example spsc_bench_throttled"
 
 # Cold-cache single-thread drain sweep. Compares regular vs hugepage allocator
 # across capacities to surface dTLB / cache effects. Needs hugepages enabled.

@@ -2,7 +2,7 @@
 
 use std::marker::PhantomData;
 
-use rtrb::{Consumer, PopError, Producer, PushError, RingBuffer};
+use rtrb::{Consumer, Producer, PushError, RingBuffer};
 
 use crate::bench::harness::spsc::{SpscBench, SpscCons, SpscProd};
 
@@ -33,9 +33,6 @@ impl<T: Send> SpscProd<T> for Producer<T> {
 impl<T: Send> SpscCons<T> for Consumer<T> {
     #[inline]
     fn try_pop(&mut self) -> Option<T> {
-        match self.pop() {
-            Ok(v) => Some(v),
-            Err(PopError::Empty) => None,
-        }
+        self.pop().ok()
     }
 }
