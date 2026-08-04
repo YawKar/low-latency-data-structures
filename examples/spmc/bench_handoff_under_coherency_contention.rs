@@ -1,6 +1,12 @@
-//! Direct one-way handoff latency under coherency contention: producer pushes rdtscp timestamp, consumer
-//! pops and records `now - ts`. Relies on invariant_tsc + nonstop_tsc being
-//! synchronized across cores on the same socket (preflight checks this).
+//! Direct one-way handoff latency under coherency contention: producer
+//! publishes an rdtscp timestamp, the sole consumer reads and records
+//! `now - ts`. Relies on invariant_tsc + nonstop_tsc being synchronized
+//! across cores on the same socket (preflight checks this).
+//!
+//! Impl selection: `BENCH_IMPL=<name>` picks which SPMC broadcast to bench.
+//! Available names depend on cargo features:
+//!   - `ours`  (default; always available under `_bench_utils`)
+//!   - `bus`   (requires `--features _bench_bus`)  WARN: backpressure, mutex+condvar
 //!
 //! Required environment:
 //! - Kernel cmdline:
@@ -11,165 +17,30 @@
 //! - Offline SMT siblings of the two bench cores (or isolate them too).
 //! - Pick two cores that share L3 but are different physical cores (lscpu -e).
 //! - Run with `ulimit -l unlimited` (or sudo) so mlockall succeeds.
-//! - Run on AC power if on a laptop (SMI rate is higher on battery).
 //!
-//! NixOS specific:
-//!   boot.kernelParams = [
-//!     "isolcpus=7,8"
-//!     "nohz_full=7,8"
-//!     "rcu_nocbs=7,8"
-//!     "intel_idle.max_cstate=0"
-//!     "processor.max_cstate=0"
-//!   ];
-//!
-use std::hint::spin_loop;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Barrier};
-use std::thread;
-
-use hdrhistogram::Histogram;
-use low_latency_data_structures::bench::tsc::rdtscp;
-use low_latency_data_structures::bench::{loc, preflight};
-use low_latency_data_structures::mem::global::GlobalAllocator;
-use low_latency_data_structures::spmc::{Options, ReadResult, new};
-
-fn preflight(used_cores: &[usize]) {
-    let mut r = preflight::PreflightReport::default();
-    preflight::release_build(&mut r);
-    preflight::cores_online(&mut r, used_cores);
-    preflight::cores_isolated(&mut r, used_cores);
-    preflight::cores_nohz_full(&mut r, used_cores);
-    preflight::cores_performance_governor(&mut r, used_cores);
-    preflight::turbo_disabled(&mut r);
-    preflight::cores_distinct_physical(&mut r, used_cores);
-    preflight::cores_smt_siblings_quiet(&mut r, used_cores);
-    preflight::cores_share_l3(&mut r, used_cores);
-    preflight::tsc_invariant_and_nonstop(&mut r);
-    r.finish();
-}
+use low_latency_data_structures::bench::harness::TwoCoreCtx;
+#[cfg(feature = "_bench_bus")]
+use low_latency_data_structures::bench::harness::adapters::bus_spmc::BusSpmc;
+use low_latency_data_structures::bench::harness::adapters::ours_spmc::OursSpmc;
+use low_latency_data_structures::bench::harness::spmc::{SpmcHandoffCfg, run_spmc_handoff};
 
 fn main() {
-    let cores = core_affinity::get_core_ids().expect("expected to get list of available cores");
-    assert!(
-        cores.len() >= 2,
-        "need at least 2 separate cores for this benchmark"
-    );
-    let producer_core = cores[0];
-    let consumer_core = cores[1];
-    let used_cpu_ids = [producer_core.id, consumer_core.id];
-    preflight(&used_cpu_ids);
+    let ctx = TwoCoreCtx::discover_and_preflight();
+    let cfg = SpmcHandoffCfg::default();
 
-    unsafe {
-        let rc = libc::mlockall(libc::MCL_CURRENT | libc::MCL_FUTURE);
-        assert_eq!(rc, 0, "mlockall failed (need CAP_IPC_LOCK or sudo)");
-    }
-
-    // Capacity 1 keeps the queue at depth 0 or 1, so each measurement reflects
-    // pure handoff (push -> pop), not in-queue residence time.
+    // Capacity 1 keeps the queue at depth 0 or 1, so each measurement
+    // reflects pure handoff (publish -> read), not in-queue residence time.
     const CAPACITY: usize = 1;
-    const N: u64 = 10_000_000;
-    const WARMUP: u64 = 1_000_000;
 
-    let (producer, mut consumer) = new::<u64, CAPACITY, GlobalAllocator>(Options::global_mlocked());
-    let barrier = Arc::new(Barrier::new(3));
-    let done = Arc::new(AtomicBool::new(false));
-    let clock = quanta::Clock::new();
-
-    let loc_before = loc::read(&used_cpu_ids);
-
-    let cthread = {
-        let barrier = barrier.clone();
-        let done = done.clone();
-        thread::spawn(move || -> Histogram<u64> {
-            assert!(
-                core_affinity::set_for_current(consumer_core),
-                "failed to set core affinity for consumer: desired core: {consumer_core:?}"
-            );
-            let actual = unsafe { libc::sched_getcpu() };
-            assert_eq!(
-                actual, consumer_core.id as i32,
-                "consumer not pinned where requested"
-            );
-
-            let mut hist = Histogram::<u64>::new(3).unwrap();
-            let mut seen: u64 = 0;
-            barrier.wait();
-            loop {
-                while let ReadResult::Value(ts) = consumer.try_read() {
-                    let now = rdtscp();
-                    if seen >= WARMUP {
-                        // wrapping_sub guards against rare cross-core TSC skew;
-                        // record() will reject zero/wraparound silently via ok().
-                        let _ = hist.record(now.wrapping_sub(ts));
-                    }
-                    seen += 1;
-                }
-                if done.load(Ordering::Acquire) {
-                    // Producer's `done` Release happens-after its last push, so
-                    // any items still in the queue are visible now. Drain.
-                    while let ReadResult::Value(ts) = consumer.try_read() {
-                        let now = rdtscp();
-                        if seen >= WARMUP {
-                            let _ = hist.record(now.wrapping_sub(ts));
-                        }
-                        seen += 1;
-                    }
-                    break;
-                }
-                spin_loop();
-            }
-            hist
-        })
+    let impl_name = std::env::var("BENCH_IMPL").unwrap_or_else(|_| "ours".to_string());
+    let report = match impl_name.as_str() {
+        "ours" => run_spmc_handoff::<OursSpmc<u64, CAPACITY>, CAPACITY>(&ctx, cfg),
+        #[cfg(feature = "_bench_bus")]
+        "bus" => run_spmc_handoff::<BusSpmc<u64, CAPACITY>, CAPACITY>(&ctx, cfg),
+        other => panic!(
+            "unknown BENCH_IMPL={other:?}. Available: 'ours' (always), \
+             'bus' (requires --features _bench_bus)."
+        ),
     };
-
-    let pthread = {
-        let barrier = barrier.clone();
-        let done = done.clone();
-        thread::spawn(move || {
-            assert!(
-                core_affinity::set_for_current(producer_core),
-                "failed to set core affinity for producer: desired core: {producer_core:?}"
-            );
-            let actual = unsafe { libc::sched_getcpu() };
-            assert_eq!(
-                actual, producer_core.id as i32,
-                "producer not pinned where requested"
-            );
-            const BUSY_WAIT_GIVING_READER_TIME: u64 = 1000;
-            barrier.wait();
-            for _ in 0..N {
-                let ts = rdtscp();
-                producer.publish(ts);
-                // giving consumer some time to actually read the value
-                while ts + BUSY_WAIT_GIVING_READER_TIME > rdtscp() {
-                    std::hint::spin_loop();
-                }
-            }
-            done.store(true, Ordering::Release);
-        })
-    };
-
-    barrier.wait();
-    pthread.join().unwrap();
-    let hist = cthread.join().unwrap();
-    let loc_after = loc::read(&used_cpu_ids);
-
-    let report = |label: &str, raw: u64| {
-        let ns = clock.delta_as_nanos(0, raw);
-        println!("  {label:<6} {raw:>7} cycles ({ns:>5} ns)");
-    };
-    report("p50", hist.value_at_quantile(0.50));
-    report("p90", hist.value_at_quantile(0.90));
-    report("p99", hist.value_at_quantile(0.99));
-    report("p99.9", hist.value_at_quantile(0.999));
-    report("max", hist.max());
-
-    println!();
-    println!("  Local timer interrupts during run (per cpu, nohz_full should keep these near 0):");
-    for (i, &cpu) in used_cpu_ids.iter().enumerate() {
-        match (loc_before[i], loc_after[i]) {
-            (Some(b), Some(a)) => println!("    cpu{cpu:>2}: +{}", a.saturating_sub(b)),
-            _ => println!("    cpu{cpu:>2}: unreadable"),
-        }
-    }
+    report.print(&ctx.clock);
 }

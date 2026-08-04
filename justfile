@@ -503,21 +503,51 @@ bench-seqlock-handoff cores:
 bench-spmc-micro:
     cargo bench --no-default-features --bench spmc
 
-# Handoff benchmark. Measures latency from the push to the pop of the item.
+# Handoff latency (publish->read). impl selects the SPMC crate: ours|bus. Per-impl features are auto-added.
 [group("Benches: SPMC")]
-bench-spmc-handoff cores:
-    sudo bash -c "ulimit -l 32000 && cargo build --release --features _bench_utils --example spmc_bench_handoff && taskset -c {{ cores }} cargo run --release --features _bench_utils --example spmc_bench_handoff"
+bench-spmc-handoff cores impl="ours":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    features="_bench_utils"
+    case "{{ impl }}" in
+        ours) ;;
+        bus) features="$features,_bench_bus" ;;
+        *) echo "unknown impl: {{ impl }} (available: ours, bus)" >&2; exit 1 ;;
+    esac
+    sudo -E bash -c "ulimit -l 32000 && \
+        BENCH_IMPL={{ impl }} cargo build --release --features $features --example spmc_bench_handoff && \
+        BENCH_IMPL={{ impl }} taskset -c {{ cores }} cargo run --release --features $features --example spmc_bench_handoff"
 
-# Lapped recovery latency. Producer runs flat out, consumer adds a per-read
-# delay (sweep via BENCH_DELAYS=...). Reports value latency, recovery cycles
-# from Lapped to next Value, and skipped-count distribution.
+# Lapped-behaviour sweep. Overwriting-family impls only (ours). Producer runs
+# flat out, consumer adds a per-read delay (sweep via BENCH_DELAYS=...).
+# Reports per-Value and per-Lapped call cost, lap rate, and skipped-count
+# distribution.
 [group("Benches: SPMC")]
-bench-spmc-lapped cores:
-    sudo -E bash -c "ulimit -l 32000 && cargo build --release --features _bench_utils --example spmc_bench_lapped && taskset -c {{ cores }} cargo run --release --features _bench_utils --example spmc_bench_lapped"
+bench-spmc-lapped cores impl="ours":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    features="_bench_utils"
+    case "{{ impl }}" in
+        ours) ;;
+        *) echo "unknown or unsupported impl: {{ impl }} (available: ours)" >&2; exit 1 ;;
+    esac
+    sudo -E bash -c "ulimit -l 32000 && \
+        BENCH_IMPL={{ impl }} cargo build --release --features $features --example spmc_bench_lapped && \
+        BENCH_IMPL={{ impl }} taskset -c {{ cores }} cargo run --release --features $features --example spmc_bench_lapped"
 
 # Capacity sweep with a sustained producer. Single consumer reads as fast as
 # it can. Reports value latency and lap count per capacity, useful for
-# arguing about slot padding.
+# arguing about slot padding. impl selects the SPMC crate: ours|bus.
 [group("Benches: SPMC")]
-bench-spmc-capacity-sweep cores:
-    sudo bash -c "ulimit -l 32000 && cargo build --release --features _bench_utils --example spmc_bench_capacity_sweep && taskset -c {{ cores }} cargo run --release --features _bench_utils --example spmc_bench_capacity_sweep"
+bench-spmc-capacity-sweep cores impl="ours":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    features="_bench_utils"
+    case "{{ impl }}" in
+        ours) ;;
+        bus) features="$features,_bench_bus" ;;
+        *) echo "unknown impl: {{ impl }} (available: ours, bus)" >&2; exit 1 ;;
+    esac
+    sudo -E bash -c "ulimit -l 32000 && \
+        BENCH_IMPL={{ impl }} cargo build --release --features $features --example spmc_bench_capacity_sweep && \
+        BENCH_IMPL={{ impl }} taskset -c {{ cores }} cargo run --release --features $features --example spmc_bench_capacity_sweep"
