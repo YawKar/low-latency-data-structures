@@ -18,6 +18,7 @@ use crate::bench::tsc::calibrate_hz;
 
 pub mod adapters;
 pub mod report;
+pub mod spmc;
 pub mod spsc;
 
 pub use report::LatencyReport;

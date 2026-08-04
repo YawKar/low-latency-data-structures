@@ -2,7 +2,11 @@
 //! `_bench_<crate>` feature so `_bench_utils` alone stays free of extra
 //! third-party deps.
 
+pub mod ours_spmc;
 pub mod ours_spsc;
+
+#[cfg(feature = "_bench_bus")]
+pub mod bus_spmc;
 
 #[cfg(feature = "_bench_rtrb")]
 pub mod rtrb_spsc;
