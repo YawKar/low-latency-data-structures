@@ -1,8 +1,11 @@
+use crossbeam_utils::CachePadded;
+
 use crate::mem::{Allocation, Allocator};
+use crate::shim::sync::atomic::AtomicUsize;
 use crate::shim::sync::{Arc, atomic};
 use crate::spsc::builder::Options;
-use crate::spsc::consumer::{Consumer, ConsumerState};
-use crate::spsc::producer::{Producer, ProducerState};
+use crate::spsc::consumer::Consumer;
+use crate::spsc::producer::Producer;
 
 /// Creates a new SPSC queue with `CAPACITY` slots using the specified allocator.
 ///
@@ -16,7 +19,7 @@ use crate::spsc::producer::{Producer, ProducerState};
 /// use low_latency_data_structures::spsc::{self, new};
 /// use low_latency_data_structures::mem::global::GlobalAllocator;
 ///
-/// let (producer, consumer) = new::<u64, 8, GlobalAllocator>(
+/// let (mut producer, mut consumer) = new::<u64, 8, GlobalAllocator>(
 ///     spsc::Options::global_mlocked(),
 /// );
 /// assert_eq!(producer.push(1), None);
@@ -55,8 +58,8 @@ where
     };
     let slots_allocation = A::allocate(CAPACITY, options.alloc);
     let q = Arc::new(Queue {
-        producer_state: ProducerState::default(),
-        consumer_state: ConsumerState::default(),
+        head: AtomicUsize::new(0).into(),
+        tail: AtomicUsize::new(0).into(),
         slots_allocation,
     });
     let producer = Producer::new(q.clone());
@@ -68,86 +71,9 @@ pub(super) struct Queue<T, const CAPACITY: usize, A>
 where
     A: Allocator,
 {
-    producer_state: ProducerState,
-    consumer_state: ConsumerState,
-    slots_allocation: A::Allocation<T>,
-}
-
-impl<T, const CAPACITY: usize, A> Queue<T, CAPACITY, A>
-where
-    A: Allocator,
-{
-    #[inline]
-    pub fn pop(&self) -> Option<T> {
-        let head = self.consumer_state.head.load(atomic::Ordering::Relaxed);
-        if head == self.consumer_state.cached_tail.get() {
-            // it's still may not be empty
-            if self.pop_still_empty(head) {
-                return None;
-            }
-        }
-        let slot_ptr = self
-            .slots_allocation
-            .ptr()
-            .wrapping_add(head & (CAPACITY - 1));
-        // SAFETY: we read the cached_tail value that was released some time ago, it means we are
-        // guaranteed to see written value here. And it's not copied more than once because we
-        // increment head on the next line.
-        let item = unsafe {
-            slot_ptr
-                .as_ref_unchecked()
-                .with_mut(|ptr| ptr.cast::<T>().read())
-        };
-        self.consumer_state
-            .head
-            .store(head.wrapping_add(1), atomic::Ordering::Release);
-        Some(item)
-    }
-
-    #[cold]
-    fn pop_still_empty(&self, head: usize) -> bool {
-        self.consumer_state
-            .cached_tail
-            .set(self.producer_state.tail.load(atomic::Ordering::Acquire));
-        head == self.consumer_state.cached_tail.get()
-    }
-
-    #[inline]
-    pub fn push(&self, item: T) -> Option<T> {
-        let tail = self.producer_state.tail.load(atomic::Ordering::Relaxed);
-        debug_assert!(tail.wrapping_sub(self.producer_state.cached_head.get()) <= CAPACITY);
-        if tail.wrapping_sub(self.producer_state.cached_head.get()) >= CAPACITY {
-            // it's still may not be full
-            if self.push_still_full(tail) {
-                return Some(item);
-            }
-        }
-        let slot_ptr = self
-            .slots_allocation
-            .ptr()
-            .wrapping_add(tail & (CAPACITY - 1));
-        // SAFETY: slot_ptr can't point to something after the slots buffer because of `% capacity`
-        // above. And it can be converted to a reference to T because T is self-contained bitwise
-        // (&T is 'static during the with_mut closure).
-        unsafe {
-            slot_ptr
-                .as_ref_unchecked()
-                .with_mut(|ptr| ptr.cast::<T>().write(item))
-        };
-        self.producer_state
-            .tail
-            .store(tail.wrapping_add(1), atomic::Ordering::Release);
-        None
-    }
-
-    #[cold]
-    fn push_still_full(&self, tail: usize) -> bool {
-        self.producer_state
-            .cached_head
-            .set(self.consumer_state.head.load(atomic::Ordering::Acquire));
-        debug_assert!(tail.wrapping_sub(self.producer_state.cached_head.get()) <= CAPACITY);
-        tail.wrapping_sub(self.producer_state.cached_head.get()) >= CAPACITY
-    }
+    pub(super) slots_allocation: A::Allocation<T>,
+    pub(super) head: CachePadded<AtomicUsize>,
+    pub(super) tail: CachePadded<AtomicUsize>,
 }
 
 impl<T, const CAPACITY: usize, A> Drop for Queue<T, CAPACITY, A>
@@ -155,8 +81,8 @@ where
     A: Allocator,
 {
     fn drop(&mut self) {
-        let head = self.consumer_state.head.load(atomic::Ordering::Relaxed);
-        let tail = self.producer_state.tail.load(atomic::Ordering::Relaxed);
+        let head = self.head.load(atomic::Ordering::Relaxed);
+        let tail = self.tail.load(atomic::Ordering::Relaxed);
         let count = tail.wrapping_sub(head);
         for k in 0..count {
             let i = head.wrapping_add(k);
@@ -176,6 +102,7 @@ where
 #[cfg(test)]
 #[cfg(feature = "tests_basic")]
 mod tests_basic {
+    use std::cell::Cell;
     use std::rc::Rc;
     use std::thread;
 
@@ -186,7 +113,6 @@ mod tests_basic {
     use crate::mem::global::{GlobalAllocator, GlobalAllocatorOptions};
     #[cfg(feature = "tests_hugepage")]
     use crate::mem::hugepages::{HugepageAllocator, HugepageAllocatorOptions, HugepageSize};
-    use crate::shim::cell::Cell;
     use crate::spsc::builder::Options;
 
     #[cfg(not(feature = "tests_hugepage"))]
@@ -213,7 +139,7 @@ mod tests_basic {
 
     #[test]
     fn move_producer_consumer_to_threads() {
-        let (producer, consumer) = new::<_, 2, Alloc>(spsc_options());
+        let (mut producer, mut consumer) = new::<_, 2, Alloc>(spsc_options());
         thread::spawn(move || {
             let _ = producer.push(123);
         })
@@ -228,7 +154,7 @@ mod tests_basic {
 
     #[test]
     fn handoff_one_value() {
-        let (producer, consumer) = new::<_, 2, Alloc>(spsc_options());
+        let (mut producer, mut consumer) = new::<_, 2, Alloc>(spsc_options());
         assert_eq!(producer.push(123), None);
         assert_eq!(consumer.pop(), Some(123));
     }
@@ -265,7 +191,7 @@ mod tests_basic {
             }
         }
         const CAPACITY: usize = 64;
-        let (producer, consumer) = new::<_, CAPACITY, Alloc>(spsc_options());
+        let (mut producer, mut consumer) = new::<_, CAPACITY, Alloc>(spsc_options());
         for _ in 0..CAPACITY {
             let counter = counter.clone();
             assert_eq!(producer.push(Droppable { counter }), None);
@@ -282,14 +208,14 @@ mod tests_basic {
 
     #[test]
     fn empty_returns_none() {
-        let (_, consumer) = new::<i32, 4, Alloc>(spsc_options());
+        let (_, mut consumer) = new::<i32, 4, Alloc>(spsc_options());
         assert_eq!(consumer.pop(), None);
         assert_eq!(consumer.pop(), None);
     }
 
     #[test]
     fn full_returns_item_back() {
-        let (producer, _) = new::<i32, 2, Alloc>(spsc_options());
+        let (mut producer, _) = new::<i32, 2, Alloc>(spsc_options());
         assert_eq!(producer.push(1), None);
         assert_eq!(producer.push(2), None);
         // Full: item comes back untouched
@@ -299,7 +225,7 @@ mod tests_basic {
 
     #[test]
     fn fifo_ordering() -> anyhow::Result<()> {
-        let (producer, consumer) = new::<_, 8, Alloc>(spsc_options());
+        let (mut producer, mut consumer) = new::<_, 8, Alloc>(spsc_options());
         for i in 0..8 {
             assert_eq!(producer.push(i), None);
         }
@@ -313,7 +239,7 @@ mod tests_basic {
     fn wraparound_n_laps() {
         const CAPACITY: usize = 4;
         let laps = 100;
-        let (producer, consumer) = new::<_, CAPACITY, Alloc>(spsc_options());
+        let (mut producer, mut consumer) = new::<_, CAPACITY, Alloc>(spsc_options());
         for lap in 0..laps {
             for i in 0..CAPACITY {
                 let val = lap * CAPACITY + i;
@@ -332,7 +258,7 @@ mod tests_basic {
 
     #[test]
     fn interleaved_push_pop() {
-        let (producer, consumer) = new::<_, 2, Alloc>(spsc_options());
+        let (mut producer, mut consumer) = new::<_, 2, Alloc>(spsc_options());
         // Push 1, pop 1, repeat: tests wraparound with tiny queue
         for i in 0..1000 {
             assert_eq!(producer.push(i), None);
@@ -342,7 +268,7 @@ mod tests_basic {
 
     #[test]
     fn capacity_one() {
-        let (producer, consumer) = new::<_, 1, Alloc>(spsc_options());
+        let (mut producer, mut consumer) = new::<_, 1, Alloc>(spsc_options());
         assert_eq!(consumer.pop(), None);
         assert_eq!(producer.push(42), None);
         assert_eq!(producer.push(43), Some(43)); // full
@@ -353,7 +279,7 @@ mod tests_basic {
     #[test]
     fn move_only_type() {
         // Verify non-Copy, non-Clone types work
-        let (producer, consumer) = new::<_, 4, Alloc>(spsc_options());
+        let (mut producer, mut consumer) = new::<_, 4, Alloc>(spsc_options());
         let s = String::from("hello");
         assert_eq!(producer.push(s), None);
         let got = consumer.pop().unwrap();
@@ -379,7 +305,7 @@ mod tests_loom {
     #[test]
     fn concurrent_push_pop() {
         loom::model(|| {
-            let (producer, consumer) = new::<i32, 4, _>(spsc_options());
+            let (mut producer, mut consumer) = new::<i32, 4, _>(spsc_options());
 
             let t1 = loom::thread::spawn(move || {
                 let _ = producer.push(1);
@@ -410,7 +336,7 @@ mod tests_loom {
     #[test]
     fn concurrent_with_full_queue() {
         loom::model(|| {
-            let (producer, consumer) = new::<i32, 1, _>(spsc_options());
+            let (mut producer, mut consumer) = new::<i32, 1, _>(spsc_options());
 
             let t1 = loom::thread::spawn(move || {
                 for i in 0..3 {
@@ -441,7 +367,7 @@ mod tests_loom {
     #[test]
     fn concurrent_no_values_lost() {
         loom::model(|| {
-            let (producer, consumer) = new::<i32, 2, _>(spsc_options());
+            let (mut producer, mut consumer) = new::<i32, 2, _>(spsc_options());
 
             let t1 = loom::thread::spawn(move || {
                 for i in 0..3 {
@@ -471,46 +397,6 @@ mod tests_loom {
             assert_eq!(sum, 0 + 1 + 2);
         });
     }
-
-    /// Because there should always be only 1 producer thread.
-    #[test]
-    #[should_panic = "Causality violation: Concurrent write accesses to `UnsafeCell`.\n"]
-    fn loom_detects_concurrent_producers() {
-        loom::model(|| {
-            let (producer, _) = new::<i32, 16, _>(spsc_options());
-            let producer = Arc::new(producer);
-            let p1 = producer.clone();
-            let t1 = loom::thread::spawn(move || {
-                let _ = p1.push(1);
-            });
-            let p2 = producer.clone();
-            let t2 = loom::thread::spawn(move || {
-                let _ = p2.push(2);
-            });
-            t1.join().unwrap();
-            t2.join().unwrap();
-        });
-    }
-
-    /// Because there should always be only 1 consumer thread.
-    #[test]
-    #[should_panic = "Causality violation: Concurrent read and write accesses.\n"]
-    fn loom_detects_concurrent_consumers() {
-        loom::model(|| {
-            let (_, consumer) = new::<i32, 16, _>(spsc_options());
-            let consumer = Arc::new(consumer);
-            let c1 = consumer.clone();
-            let t1 = loom::thread::spawn(move || {
-                let _ = c1.pop();
-            });
-            let c2 = consumer.clone();
-            let t2 = loom::thread::spawn(move || {
-                let _ = c2.pop();
-            });
-            t1.join().unwrap();
-            t2.join().unwrap();
-        });
-    }
 }
 
 #[cfg(test)]
@@ -522,7 +408,8 @@ mod tests_dhat {
     #[test]
     fn hot_path_zero_allocations() {
         let _profiler = dhat::Profiler::builder().testing().build();
-        let (producer, consumer) = new::<u64, 1024, GlobalAllocator>(Options::global_mlocked());
+        let (mut producer, mut consumer) =
+            new::<u64, 1024, GlobalAllocator>(Options::global_mlocked());
 
         // Warm up to absorb any one-time platform allocations: lazy symbol
         // resolution in the dynamic linker, libstd TLS init, debug-build

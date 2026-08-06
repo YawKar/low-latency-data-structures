@@ -18,7 +18,7 @@ fn main() {
 
 fn smoke_spsc() {
     println!("smoke_spsc...");
-    let (producer, consumer) =
+    let (mut producer, mut consumer) =
         spsc::new::<i32, 128, GlobalAllocator>(spsc::Options::global_mlocked());
     assert!(producer.push(123).is_none());
     assert!(matches!(consumer.pop(), Some(123)));
