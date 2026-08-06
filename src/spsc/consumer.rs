@@ -1,20 +1,11 @@
 use std::marker::PhantomData;
+use std::mem::MaybeUninit;
+use std::sync::atomic;
 
-use crossbeam_utils::CachePadded;
-
-use crate::mem::Allocator;
-use crate::shim::cell::Cell;
+use crate::mem::{Allocation, Allocator};
+use crate::shim::cell::UnsafeCell;
 use crate::shim::sync::Arc;
-use crate::shim::sync::atomic::AtomicUsize;
 use crate::spsc::queue::Queue;
-
-pub(super) type ConsumerState = CachePadded<ConsumerStateInner>;
-
-#[derive(Default)]
-pub(super) struct ConsumerStateInner {
-    pub head: AtomicUsize,
-    pub cached_tail: Cell<usize>,
-}
 
 /// The popping handle of an SPSC FIFO queue.
 ///
@@ -27,6 +18,9 @@ where
     A: Allocator,
 {
     inner: Arc<Queue<T, CAPACITY, A>>,
+    slots_ptr: *mut UnsafeCell<MaybeUninit<T>>,
+    cached_head: usize,
+    cached_tail: usize,
     _not_sync: PhantomData<*const ()>,
 }
 
@@ -56,8 +50,12 @@ where
     A: Allocator,
 {
     pub(super) fn new(queue: Arc<Queue<T, CAPACITY, A>>) -> Self {
+        let slots_ptr = queue.slots_allocation.ptr();
         Self {
             inner: queue,
+            slots_ptr,
+            cached_head: 0,
+            cached_tail: 0,
             _not_sync: PhantomData,
         }
     }
@@ -73,7 +71,7 @@ where
     /// use low_latency_data_structures::spsc::{self, new};
     /// use low_latency_data_structures::mem::global::GlobalAllocator;
     ///
-    /// let (producer, consumer) = new::<u64, 4, GlobalAllocator>(
+    /// let (mut producer, mut consumer) = new::<u64, 4, GlobalAllocator>(
     ///     spsc::Options::global_mlocked(),
     /// );
     /// assert_eq!(consumer.pop(), None);
@@ -82,8 +80,35 @@ where
     /// ```
     #[inline]
     #[must_use = "ignoring the popped item silently drops it"]
-    pub fn pop(&self) -> Option<T> {
-        self.inner.pop()
+    pub fn pop(&mut self) -> Option<T> {
+        if self.cached_head == self.cached_tail {
+            if self.still_empty() {
+                return None;
+            }
+        }
+        let slot_ptr = self
+            .slots_ptr
+            .wrapping_add(self.cached_head & (CAPACITY - 1));
+        // SAFETY: we read the cached_tail value that was released some time ago, it means we are
+        // guaranteed to see written value here. And it's not copied more than once because we
+        // increment head on the next line.
+        let item = unsafe {
+            slot_ptr
+                .as_ref_unchecked()
+                .with_mut(|ptr| ptr.cast::<T>().read())
+        };
+        self.cached_head += 1;
+        self.inner
+            .head
+            .store(self.cached_head, atomic::Ordering::Release);
+        Some(item)
+    }
+
+    #[cold]
+    fn still_empty(&mut self) -> bool {
+        // producer may have written something
+        self.cached_tail = self.inner.tail.load(atomic::Ordering::Acquire);
+        self.cached_head == self.cached_tail
     }
 }
 

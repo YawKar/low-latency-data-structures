@@ -12,7 +12,6 @@ pub mod alloc {
 
 #[cfg(not(feature = "tests_loom"))]
 pub mod cell {
-    pub use std::cell::*;
 
     #[derive(Debug)]
     #[repr(transparent)]

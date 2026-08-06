@@ -1,20 +1,11 @@
 use std::marker::PhantomData;
+use std::mem::MaybeUninit;
+use std::sync::atomic;
 
-use crossbeam_utils::CachePadded;
-
-use crate::mem::Allocator;
-use crate::shim::cell::Cell;
+use crate::mem::{Allocation, Allocator};
+use crate::shim::cell::UnsafeCell;
 use crate::shim::sync::Arc;
-use crate::shim::sync::atomic::AtomicUsize;
 use crate::spsc::queue::Queue;
-
-pub(super) type ProducerState = CachePadded<ProducerStateInner>;
-
-#[derive(Default)]
-pub(super) struct ProducerStateInner {
-    pub tail: AtomicUsize,
-    pub cached_head: Cell<usize>,
-}
 
 /// The pushing handle of an SPSC FIFO queue.
 ///
@@ -27,6 +18,9 @@ where
     A: Allocator,
 {
     inner: Arc<Queue<T, CAPACITY, A>>,
+    slots_ptr: *mut UnsafeCell<MaybeUninit<T>>,
+    cached_head: usize,
+    cached_tail: usize,
     _not_sync: PhantomData<*const ()>,
 }
 
@@ -56,8 +50,12 @@ where
     A: Allocator,
 {
     pub(super) fn new(queue: Arc<Queue<T, CAPACITY, A>>) -> Self {
+        let slots_ptr = queue.slots_allocation.ptr();
         Self {
             inner: queue,
+            slots_ptr,
+            cached_head: 0,
+            cached_tail: 0,
             _not_sync: PhantomData,
         }
     }
@@ -74,7 +72,7 @@ where
     /// use low_latency_data_structures::spsc::{self, new};
     /// use low_latency_data_structures::mem::global::GlobalAllocator;
     ///
-    /// let (producer, consumer) = new::<u64, 2, GlobalAllocator>(
+    /// let (mut producer, mut consumer) = new::<u64, 2, GlobalAllocator>(
     ///     spsc::Options::global_mlocked(),
     /// );
     /// assert_eq!(producer.push(1), None);
@@ -85,8 +83,38 @@ where
     /// ```
     #[inline]
     #[must_use = "if the queue is full, the returned item must be handled (e.g. retried) or it is silently dropped"]
-    pub fn push(&self, item: T) -> Option<T> {
-        self.inner.push(item)
+    pub fn push(&mut self, item: T) -> Option<T> {
+        if self.cached_tail.wrapping_sub(self.cached_head) == CAPACITY {
+            if self.still_full() {
+                return Some(item);
+            }
+        }
+        let slot_ptr = self
+            .slots_ptr
+            .wrapping_add(self.cached_tail & (CAPACITY - 1));
+        // SAFETY: slot_ptr can't point to something after the slots buffer because of `% capacity`
+        // above. And it can be converted to a reference to T because T is self-contained bitwise
+        // (&T is 'static during the with_mut closure).
+        unsafe {
+            slot_ptr
+                .as_ref_unchecked()
+                .with_mut(|ptr| ptr.cast::<T>().write(item))
+        };
+        self.cached_tail += 1;
+        self.inner
+            .tail
+            .store(self.cached_tail, atomic::Ordering::Release);
+        None
+    }
+
+    #[cold]
+    fn still_full(&mut self) -> bool {
+        // consumer may have moved the head
+        self.cached_head = self.inner.head.load(atomic::Ordering::Acquire);
+        if self.cached_tail.wrapping_sub(self.cached_head) == CAPACITY {
+            return true;
+        }
+        false
     }
 }
 
