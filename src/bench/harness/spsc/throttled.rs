@@ -80,15 +80,7 @@ impl Default for SpscThrottledCfg {
         // Match the pre-harness bench for a like-for-like comparison.
         Self {
             rates_hz: vec![
-                1_000_000,
-                10_000_000,
-                28_000_000,
-                30_000_000,
-                50_000_000,
-                100_000_000,
-                200_000_000,
-                300_000_000,
-                500_000_000,
+                1_000_000, 10_000_000, 20_000_000, 30_000_000, 35_000_000, 40_000_000, 50_000_000,
             ],
             target_secs: 3,
             warmup_divisor: 10,

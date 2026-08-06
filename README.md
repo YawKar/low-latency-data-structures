@@ -89,9 +89,9 @@ each table.
 
 | Primitive | Cap | Time per op |
 | --- | --- | --- |
-| SPSC ping-pong | 64 | 3.79 ns |
-| SPSC ping-pong | 1024 | 3.57 ns |
-| SPSC ping-pong | 65536 | 3.61 ns |
+| SPSC ping-pong | 64 | 2.74 ns |
+| SPSC ping-pong | 1024 | 2.67 ns |
+| SPSC ping-pong | 65536 | 2.72 ns |
 | SeqLock write+read | n/a | 3.18 ns |
 | SPMC publish+try_read | 64 | 4.57 ns |
 | SPMC publish+try_read | 1024 | 4.64 ns |
@@ -105,9 +105,11 @@ Latency from the producing write to the matching consuming read, in ns.
 
 | Primitive | p50 | p90 | p99 | p99.9 | max |
 | --- | --- | --- | --- | --- | --- |
-| SPSC | 168 | 222 | 284 | 319 | 4465 |
-| SPMC | 120 | 148 | 184 | 188 | 2306 |
-| SeqLock | 84 | 85 | 97 | 98 | 1907 |
+| SPSC | 209 | 226 | 233 | 268 | N/A* |
+| SPMC | 120 | 148 | 184 | 188 | N/A* |
+| SeqLock | 84 | 85 | 97 | 98 | N/A* |
+
+> N/A* because my laptop's SMI interruptions can't be turned off
 
 Recipes: `just bench-spsc-handoff 7,8`, `just bench-spmc-handoff 7,8`,
 `just bench-seqlock-handoff 7,8`.
@@ -119,11 +121,14 @@ at a fixed rate, consumer draining as fast as possible:
 
 | Offered (ops/s) | p50 | p99 | p99.9 | Notes |
 | --- | --- | --- | --- | --- |
-| 1 M | 192 ns | 271 ns | 303 ns | comfortable |
-| 10 M | 202 ns | 309 ns | 337 ns | comfortable |
-| 28 M | 398 ns | 516 ns | 572 ns | knee |
-| 30 M | 438 ns | 6.6 ms | 7.96 ms | falling behind |
-| 50 M+ | saturated (effective ~31.5 M/s) | | | |
+| 1 M | 215 ns | 295 ns | 313 ns* | comfortable |
+| 10 M | 235 ns | 313 ns | 335 ns* | comfortable |
+| 28 M | 356 ns | 423 ns | 506 ns* | comfortable |
+| 30 M | 453 ns | 615 ns | 695 ns* | comfortable |
+| 35 M | 1109 ns | 1383 ns | 4786 ns* | comfortable but near the knee |
+| 50 M+ | saturated (effective ~35.001 M/s) | | | |
+
+> ns* are highly unstable because of my laptop's SMI interruptions
 
 Recipe: `just bench-spsc-throttled 7,8`.
 
@@ -134,10 +139,10 @@ flush buffer evicts every cache level:
 
 | Capacity | Bytes | Regular | Hugepage | Hugepage / regular |
 | --- | --- | --- | --- | --- |
-| 512 | 32 KiB | 8 ns | 7 ns | 0.88x |
+| 512 | 32 KiB | 7 ns | 7 ns | 1.00x |
 | 8 192 | 512 KiB | 6 ns | 6 ns | 1.00x |
 | 131 072 | 8 MiB | 6 ns | 6 ns | 1.00x |
-| 1 048 576 | 64 MiB | 6 ns | 7 ns | 1.14x |
+| 1 048 576 | 64 MiB | 6 ns | 7 ns | 0.86x |
 
 Hugepages need `vm.nr_hugepages > 0`. Recipe: `just bench-spsc-drain 7,8`
 after `just enable-hugepages`.
@@ -173,6 +178,8 @@ Single trailing consumer, value latency and lap rate as the slot ring grows:
 Recipe: `just bench-spmc-capacity-sweep 7,8`.
 
 ### Setup
+
+TODO: test it on hetzner dedicated
 
 ```
 CPU:        Intel i7-10750H @ 2.6 GHz, 6 cores / 12 threads
