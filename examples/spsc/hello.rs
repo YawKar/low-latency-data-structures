@@ -7,7 +7,7 @@ use low_latency_data_structures::mem::global::GlobalAllocator;
 use low_latency_data_structures::spsc;
 
 fn main() {
-    let (producer, consumer) =
+    let (mut producer, mut consumer) =
         spsc::new::<u64, 16, GlobalAllocator>(spsc::Options::global_mlocked());
 
     let producer_h = thread::spawn(move || {
