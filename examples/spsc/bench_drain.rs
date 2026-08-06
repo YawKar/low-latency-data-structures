@@ -118,7 +118,7 @@ fn median(mut xs: Vec<u64>) -> u64 {
 macro_rules! drain_trial {
     ($cap:expr, $flush:expr, $tsc_hz:expr, $make:expr) => {{
         let cap: usize = $cap;
-        let (producer, consumer) = $make;
+        let (mut producer, mut consumer) = $make;
         for i in 0..cap as u64 {
             // Single-threaded, no concurrent consumer: push only fails if we
             // overfill, which we don't.
