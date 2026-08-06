@@ -1,3 +1,20 @@
+## [0.0.7] - 2026-08-06
+
+### 💼 Other
+
+- *(spsc/alt)* Add harness+alternative crates benches
+- *(spsc/alt)* Add throttled benches
+- *(spmc/alt)* Add alternative crates benches
+
+### ⚡ Performance
+
+- *(spsc)* [**breaking**] Steal rtrb's ideas
+
+### ⚙️ Miscellaneous Tasks
+
+- *(spsc/bench)* Fix bench after API change
+- *(readme)* Update spsc bench results
+- Bump the version up to 0.0.7
 ## [0.0.6] - 2026-07-29
 
 ### 🐛 Bug Fixes
