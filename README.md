@@ -32,7 +32,7 @@ read with seq-number validation, so the value type must implement
 
 ```toml
 [dependencies]
-low-latency-data-structures = "=0.0.6"
+low-latency-data-structures = "=0.0.7"
 ```
 
 ```rust
@@ -40,7 +40,7 @@ use low_latency_data_structures::mem::global::GlobalAllocator;
 
 // SPSC
 use low_latency_data_structures::spsc;
-let (producer, consumer) =
+let (mut producer, mut consumer) =
     spsc::new::<u64, 1024, GlobalAllocator>(spsc::Options::global_mlocked());
 assert!(producer.push(42).is_none());
 assert_eq!(consumer.pop(), Some(42));
